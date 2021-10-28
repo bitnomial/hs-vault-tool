@@ -72,12 +72,11 @@ vaultRequest conn VaultRequest{vrMethod, vrPath, vrBody, vrExpectedStatuses} = d
         Nothing -> throwIO $ VaultException_InvalidAddress vrMethod vrPath
         Just initReq -> pure initReq
     let reqBody = maybe BL.empty encode vrBody
-        req =
-            initReq
-                { method = vrMethod
-                , requestBody = RequestBodyLBS reqBody
-                , requestHeaders = requestHeaders initReq ++ authTokenHeader conn
-                }
+        req = initReq
+            { method = vrMethod
+            , requestBody = RequestBodyLBS reqBody
+            , requestHeaders = requestHeaders initReq ++ authTokenHeader conn
+            }
     rsp <- httpLbs req (vaultConnectionManager conn)
     let s = statusCode (responseStatus rsp)
     unless (s `elem` vrExpectedStatuses) $ do

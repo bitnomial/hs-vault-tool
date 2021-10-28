@@ -22,8 +22,8 @@ module Network.VaultTool.Types (
 import Control.Exception (Exception)
 import Data.Aeson
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Lazy as BL
 import Data.Text (Text)
+import qualified Data.ByteString.Lazy as BL
 import Network.HTTP.Client (Manager)
 
 data VaultConnection
@@ -48,13 +48,13 @@ vaultAuthToken :: VaultConnection -> Maybe VaultAuthToken
 vaultAuthToken (AuthenticatedVaultConnection _ _ token) = Just token
 vaultAuthToken (UnauthenticatedVaultConnection _ _) = Nothing
 
-newtype VaultAddress = VaultAddress {unVaultAddress :: Text}
+newtype VaultAddress = VaultAddress { unVaultAddress :: Text }
     deriving (Show, Eq, Ord)
 
-newtype VaultUnsealKey = VaultUnsealKey {unVaultUnsealKey :: Text}
+newtype VaultUnsealKey = VaultUnsealKey { unVaultUnsealKey :: Text }
     deriving (Show, Eq, Ord)
 
-newtype VaultAuthToken = VaultAuthToken {unVaultAuthToken :: Text}
+newtype VaultAuthToken = VaultAuthToken { unVaultAuthToken :: Text }
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultAuthToken where
@@ -62,16 +62,16 @@ instance FromJSON VaultAuthToken where
         text <- parseJSON j
         pure (VaultAuthToken text)
 
-newtype VaultMountedPath = VaultMountedPath {unVaultMountedPath :: Text}
+newtype VaultMountedPath = VaultMountedPath { unVaultMountedPath :: Text }
     deriving (Show, Eq, Ord)
 
-newtype VaultSearchPath = VaultSearchPath {unVaultSearchPath :: Text}
+newtype VaultSearchPath = VaultSearchPath { unVaultSearchPath :: Text }
     deriving (Show, Eq, Ord)
 
 newtype VaultSecretPath = VaultSecretPath (VaultMountedPath, VaultSearchPath)
     deriving (Show, Eq, Ord)
 
-newtype VaultAppRoleId = VaultAppRoleId {unVaultAppRoleId :: Text}
+newtype VaultAppRoleId = VaultAppRoleId { unVaultAppRoleId :: Text }
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultAppRoleId where
@@ -79,9 +79,9 @@ instance FromJSON VaultAppRoleId where
     parseJSON _ = fail "Not an Object"
 
 instance ToJSON VaultAppRoleId where
-    toJSON v = object ["role_id" .= unVaultAppRoleId v]
+    toJSON v = object [ "role_id" .= unVaultAppRoleId v ]
 
-newtype VaultAppRoleSecretId = VaultAppRoleSecretId {unVaultAppRoleSecretId :: Text}
+newtype VaultAppRoleSecretId = VaultAppRoleSecretId { unVaultAppRoleSecretId :: Text }
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultAppRoleSecretId where
@@ -90,9 +90,9 @@ instance FromJSON VaultAppRoleSecretId where
         pure $ VaultAppRoleSecretId text
 
 instance ToJSON VaultAppRoleSecretId where
-    toJSON v = object ["secret_id" .= unVaultAppRoleSecretId v]
+    toJSON v = object [ "secret_id" .= unVaultAppRoleSecretId v ]
 
-newtype VaultAppRoleSecretIdAccessor = VaultAppRoleSecretIdAccessor {unVaultAppRoleSecretIdAccessor :: Text}
+newtype VaultAppRoleSecretIdAccessor = VaultAppRoleSecretIdAccessor { unVaultAppRoleSecretIdAccessor :: Text }
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultAppRoleSecretIdAccessor where
@@ -101,7 +101,7 @@ instance FromJSON VaultAppRoleSecretIdAccessor where
         pure $ VaultAppRoleSecretIdAccessor text
 
 instance ToJSON VaultAppRoleSecretIdAccessor where
-    toJSON v = object ["secret_id_accessor" .= unVaultAppRoleSecretIdAccessor v]
+    toJSON v = object [ "secret_id_accessor" .= unVaultAppRoleSecretIdAccessor v ]
 
 data VaultException
     = VaultException

@@ -2,70 +2,77 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | Unless otherwise specified, all IO functions in this module may
- potentially throw 'HttpException' or 'VaultException'
--}
-module Network.VaultTool (
-    VaultAddress (..),
-    VaultUnsealKey (..),
-    VaultAuthToken (..),
-    VaultAppRoleId (..),
-    VaultAppRoleSecretId (..),
-    VaultException (..),
-    VaultHealth (..),
-    vaultHealth,
-    connectToVault,
-    connectToVaultAppRole,
-    vaultAuthEnable,
-    vaultPolicyCreate,
-    vaultInit,
-    VaultSealStatus (..),
-    vaultSealStatus,
-    vaultSeal,
-    VaultUnseal (..),
-    vaultUnseal,
-    vaultAppRoleCreate,
-    vaultAppRoleRoleIdRead,
-    vaultAppRoleSecretIdGenerate,
-    defaultVaultAppRoleParameters,
-    VaultAppRoleParameters (..),
-    VaultAppRoleSecretIdGenerateResponse (..),
-    VaultMount (..),
-    VaultMountRead,
-    VaultMountWrite,
-    VaultMountConfig (..),
-    VaultMountConfigRead,
-    VaultMountConfigWrite,
-    VaultMountOptions (..),
-    VaultMountConfigOptions,
-    vaultMounts,
-    vaultMountTune,
-    vaultMountSetTune,
-    vaultNewMount,
-    vaultUnmount,
-    VaultMountedPath (..),
-    VaultSearchPath (..),
-    VaultSecretPath (..),
-) where
+-- | Unless otherwise specified, all IO functions in this module may
+-- potentially throw 'HttpException' or 'VaultException'
 
+module Network.VaultTool
+    ( VaultAddress(..)
+    , VaultUnsealKey(..)
+    , VaultAuthToken(..)
+    , VaultAppRoleId(..)
+    , VaultAppRoleSecretId(..)
+    , VaultException(..)
+
+    , VaultHealth(..)
+    , vaultHealth
+
+    , connectToVault
+
+    , connectToVaultAppRole
+
+    , vaultAuthEnable
+
+    , vaultPolicyCreate
+
+    , vaultInit
+    , VaultSealStatus(..)
+    , vaultSealStatus
+    , vaultSeal
+    , VaultUnseal(..)
+    , vaultUnseal
+
+    , vaultAppRoleCreate
+    , vaultAppRoleRoleIdRead
+    , vaultAppRoleSecretIdGenerate
+    , defaultVaultAppRoleParameters
+    , VaultAppRoleParameters(..)
+    , VaultAppRoleSecretIdGenerateResponse(..)
+
+    , VaultMount(..)
+    , VaultMountRead
+    , VaultMountWrite
+    , VaultMountConfig(..)
+    , VaultMountConfigRead
+    , VaultMountConfigWrite
+    , VaultMountOptions(..)
+    , VaultMountConfigOptions
+    , vaultMounts
+    , vaultMountTune
+    , vaultMountSetTune
+    , vaultNewMount
+    , vaultUnmount
+
+    , VaultMountedPath(..)
+    , VaultSearchPath(..)
+    , VaultSecretPath(..)
+    ) where
 import Control.Exception (throwIO)
 import Data.Aeson
-import Data.Aeson.Types (Pair, parseEither)
-import qualified Data.HashMap.Strict as H
+import Data.Aeson.Types (parseEither, Pair)
 import Data.List (sortOn)
-import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Maybe (catMaybes)
 import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
+import qualified Data.HashMap.Strict as H
 
 import Network.VaultTool.Internal
 import Network.VaultTool.Types
 
-{- | <https://www.vaultproject.io/docs/http/sys-health.html>
-
- See 'vaultHealth'
--}
+-- | <https://www.vaultproject.io/docs/http/sys-health.html>
+--
+-- See 'vaultHealth'
 data VaultHealth = VaultHealth
     { _VaultHealth_Version :: Text
     , _VaultHealth_ServerTimeUtc :: Int
@@ -77,12 +84,12 @@ data VaultHealth = VaultHealth
 
 instance FromJSON VaultHealth where
     parseJSON (Object v) =
-        VaultHealth
-            <$> v .: "version"
-            <*> v .: "server_time_utc"
-            <*> v .: "initialized"
-            <*> v .: "sealed"
-            <*> v .: "standby"
+        VaultHealth <$>
+             v .: "version" <*>
+             v .: "server_time_utc" <*>
+             v .: "initialized" <*>
+             v .: "sealed" <*>
+             v .: "standby"
     parseJSON _ = fail "Not an Object"
 
 -- | https://www.vaultproject.io/docs/http/sys-health.html
@@ -95,28 +102,25 @@ vaultHealth addr = do
   where
     expectedStatusCodes = [200, 429, 501, 503]
 
-{- | Just initializes the 'VaultConnection' objects, does not actually make any
- contact with the vault server. (That is also the explanation why there is no
- function to disconnect)
--}
+-- | Just initializes the 'VaultConnection' objects, does not actually make any
+-- contact with the vault server. (That is also the explanation why there is no
+-- function to disconnect)
 connectToVault :: VaultAddress -> VaultAuthToken -> IO VaultConnection
 connectToVault addr authToken = do
     manager <- newManager tlsManagerSettings
     pure $ mkAuthenticatedVaultConnection addr manager authToken
 
-{- | Initializes the 'VaultConnection' objects using approle credentials to retrieve an authtoken,
- and then calls `connectToVault`
--}
+-- | Initializes the 'VaultConnection' objects using approle credentials to retrieve an authtoken,
+-- and then calls `connectToVault`
 connectToVaultAppRole :: VaultAddress -> VaultAppRoleId -> VaultAppRoleSecretId -> IO VaultConnection
 connectToVaultAppRole addr roleId secretId = do
     manager <- newManager tlsManagerSettings
     authToken <- vaultAppRoleLogin addr manager roleId secretId
     connectToVault addr authToken
 
-{- | <https://www.vaultproject.io/docs/http/sys-init.html>
-
- See 'vaultInit'
--}
+-- | <https://www.vaultproject.io/docs/http/sys-init.html>
+--
+-- See 'vaultInit'
 data VaultInitResponse = VaultInitResponse
     { _VaultInitResponse_Keys :: [Text]
     , _VaultInitResponse_RootToken :: VaultAuthToken
@@ -125,70 +129,59 @@ data VaultInitResponse = VaultInitResponse
 
 instance FromJSON VaultInitResponse where
     parseJSON (Object v) =
-        VaultInitResponse
-            <$> v .: "keys"
-            <*> v .: "root_token"
+        VaultInitResponse <$>
+             v .: "keys" <*>
+             v .: "root_token"
     parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/docs/http/sys-init.html>
-vaultInit ::
-    VaultAddress ->
-    -- | @secret_shares@: The number of shares to split the master key
-    -- into
-    Int ->
-    -- | @secret_threshold@: The number of shares required to
-    -- reconstruct the master key. This must be less than or equal to
-    -- secret_shares
-    Int ->
-    -- | master keys and initial root token
-    IO ([VaultUnsealKey], VaultAuthToken)
+vaultInit
+    :: VaultAddress
+    -> Int -- ^ @secret_shares@: The number of shares to split the master key
+           -- into
+    -> Int -- ^ @secret_threshold@: The number of shares required to
+           -- reconstruct the master key. This must be less than or equal to
+           -- secret_shares
+    -> IO ([VaultUnsealKey], VaultAuthToken) -- ^ master keys and initial root token
 vaultInit addr secretShares secretThreshold = do
-    let reqBody =
-            object
-                [ "secret_shares" .= secretShares
-                , "secret_threshold" .= secretThreshold
-                ]
+    let reqBody = object
+            [ "secret_shares" .= secretShares
+            , "secret_threshold" .= secretThreshold
+            ]
     manager <- newManager tlsManagerSettings
-    rsp <-
-        runVaultRequest (mkUnauthenticatedVaultConnection addr manager) $
-            newPutRequest "/sys/init" (Just reqBody)
+    rsp <- runVaultRequest (mkUnauthenticatedVaultConnection addr manager) $
+        newPutRequest "/sys/init" (Just reqBody)
     let VaultInitResponse{_VaultInitResponse_Keys, _VaultInitResponse_RootToken} = rsp
     pure (map VaultUnsealKey _VaultInitResponse_Keys, _VaultInitResponse_RootToken)
 
-{- | <https://www.vaultproject.io/docs/http/sys-seal-status.html>
-
- See 'vaultSealStatus'
--}
+-- | <https://www.vaultproject.io/docs/http/sys-seal-status.html>
+--
+-- See 'vaultSealStatus'
 data VaultSealStatus = VaultSealStatus
     { _VaultSealStatus_Sealed :: Bool
-    , -- | threshold
-      _VaultSealStatus_T :: Int
-    , -- | number of shares
-      _VaultSealStatus_N :: Int
+    , _VaultSealStatus_T :: Int -- ^ threshold
+    , _VaultSealStatus_N :: Int -- ^ number of shares
     , _VaultSealStatus_Progress :: Int
     }
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultSealStatus where
     parseJSON (Object v) =
-        VaultSealStatus
-            <$> v .: "sealed"
-            <*> v .: "t"
-            <*> v .: "n"
-            <*> v .: "progress"
+        VaultSealStatus <$>
+             v .: "sealed" <*>
+             v .: "t" <*>
+             v .: "n" <*>
+             v .: "progress"
     parseJSON _ = fail "Not an Object"
 
 vaultSealStatus :: VaultAddress -> IO VaultSealStatus
 vaultSealStatus addr = do
     manager <- newManager tlsManagerSettings
-    runVaultRequest
-        (mkUnauthenticatedVaultConnection addr manager)
-        (newGetRequest "/sys/seal-status")
+    runVaultRequest (mkUnauthenticatedVaultConnection addr manager) (newGetRequest "/sys/seal-status")
 
-{- | <https://www.vaultproject.io/api/auth/approle/index.html>
-
- See 'sample-response-7'
--}
+-- | <https://www.vaultproject.io/api/auth/approle/index.html>
+--
+-- See 'sample-response-7'
 data VaultAuth = VaultAuth
     { _VaultAuth_Renewable :: Bool
     , _VaultAuth_LeaseDuration :: Int
@@ -199,17 +192,16 @@ data VaultAuth = VaultAuth
 
 instance FromJSON VaultAuth where
     parseJSON (Object v) =
-        VaultAuth
-            <$> v .: "renewable"
-            <*> v .: "lease_duration"
-            <*> v .: "policies"
-            <*> v .: "client_token"
+        VaultAuth <$>
+            v .: "renewable" <*>
+            v .: "lease_duration" <*>
+            v .: "policies" <*>
+            v .: "client_token"
     parseJSON _ = fail "Not an Object"
 
-{- | <https://www.vaultproject.io/api/auth/approle/index.html>
-
- See 'sample-response-7'
--}
+-- | <https://www.vaultproject.io/api/auth/approle/index.html>
+--
+-- See 'sample-response-7'
 data VaultAppRoleResponse = VaultAppRoleResponse
     { _VaultAppRoleResponse_Auth :: Maybe VaultAuth
     , _VaultAppRoleResponse_Warnings :: Value
@@ -223,68 +215,63 @@ data VaultAppRoleResponse = VaultAppRoleResponse
 
 instance FromJSON VaultAppRoleResponse where
     parseJSON (Object v) =
-        VaultAppRoleResponse
-            <$> v .:? "auth"
-            <*> v .: "warnings"
-            <*> v .: "wrap_info"
-            <*> v .: "data"
-            <*> v .: "lease_duration"
-            <*> v .: "renewable"
-            <*> v .: "lease_id"
+        VaultAppRoleResponse <$>
+            v .:? "auth" <*>
+            v .: "warnings" <*>
+            v .: "wrap_info" <*>
+            v .: "data" <*>
+            v .: "lease_duration" <*>
+            v .: "renewable" <*>
+            v .: "lease_id"
     parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/docs/auth/approle.html>
 vaultAppRoleLogin :: VaultAddress -> Manager -> VaultAppRoleId -> VaultAppRoleSecretId -> IO VaultAuthToken
 vaultAppRoleLogin addr manager roleId secretId = do
     response <-
-        runVaultRequest (mkUnauthenticatedVaultConnection addr manager) $
-            newPostRequest "/auth/approle/login" (Just reqBody)
+        runVaultRequest
+            (mkUnauthenticatedVaultConnection addr manager)
+            (newPostRequest "/auth/approle/login" $ Just reqBody)
     maybe failOnNullAuth (return . _VaultAuth_ClientToken) $ _VaultAppRoleResponse_Auth response
   where
-    reqBody =
-        object
-            [ "role_id" .= unVaultAppRoleId roleId
-            , "secret_id" .= unVaultAppRoleSecretId secretId
-            ]
-    failOnNullAuth = fail "Auth on login is null"
+  reqBody = object
+      [ "role_id" .= unVaultAppRoleId roleId,
+        "secret_id" .= unVaultAppRoleSecretId secretId
+      ]
+  failOnNullAuth = fail "Auth on login is null"
 
 -- | <https://www.vaultproject.io/docs/auth/approle.html#via-the-api-1>
 vaultAuthEnable :: VaultConnection -> Text -> IO ()
-vaultAuthEnable conn authMethod = do
-    _ <-
-        runVaultRequest_ conn
-            . withStatusCodes [200, 204]
-            $ newPostRequest ("/sys/auth/" <> authMethod) (Just reqBody)
-    pure ()
+vaultAuthEnable conn authMethod =
+    runVaultRequest_ conn
+        . withStatusCodes [200, 204]
+        $ newPostRequest ("/sys/auth/" <> authMethod) (Just reqBody)
   where
-    reqBody = object ["type" .= authMethod]
+  reqBody = object [ "type" .= authMethod ]
 
 -- | <https://www.vaultproject.io/api/system/policies.html#create-update-acl-policy>
 vaultPolicyCreate :: VaultConnection -> Text -> Text -> IO ()
-vaultPolicyCreate conn policyName policy = do
-    _ <-
-        runVaultRequest_ conn
-            . withStatusCodes [200, 204]
-            $ newPutRequest
-                ("/sys/policies/acl/" <> policyName)
-                (Just reqBody)
-    pure ()
-  where
-    reqBody = object ["policy" .= policy]
+vaultPolicyCreate conn policyName policy =
+    runVaultRequest_ conn
+        . withStatusCodes [200, 204]
+        $ newPutRequest
+            ("/sys/policies/acl/" <> policyName)
+            (Just reqBody)
+    where
+    reqBody = object [ "policy" .= policy ]
 
 newtype VaultAppRoleListResponse = VaultAppRoleListResponse
-    {_VaultAppRoleListResponse_AppRoles :: [Text]}
+    { _VaultAppRoleListResponse_AppRoles :: [Text] }
 
 instance FromJSON VaultAppRoleListResponse where
     parseJSON (Object v) =
-        VaultAppRoleListResponse
-            <$> v .: "keys"
+        VaultAppRoleListResponse <$>
+            v .: "keys"
     parseJSON _ = fail "Not an Object"
 
-{- | <https://www.vaultproject.io/api/auth/approle/index.html#create-new-approle>
-
- Note: For TTL fields, only integer number seconds, i.e. 3600, are supported
--}
+-- | <https://www.vaultproject.io/api/auth/approle/index.html#create-new-approle>
+--
+-- Note: For TTL fields, only integer number seconds, i.e. 3600, are supported
 data VaultAppRoleParameters = VaultAppRoleParameters
     { _VaultAppRoleParameters_BindSecretId :: Bool
     , _VaultAppRoleParameters_Policies :: [Text]
@@ -297,34 +284,32 @@ data VaultAppRoleParameters = VaultAppRoleParameters
     }
 
 instance ToJSON VaultAppRoleParameters where
-    toJSON v =
-        object $
-            [ "bind_secret_id" .= _VaultAppRoleParameters_BindSecretId v
-            , "policies" .= _VaultAppRoleParameters_Policies v
-            ]
-                <> catMaybes
-                    [ "secret_id_num_uses" .=? _VaultAppRoleParameters_SecretIdNumUses v
-                    , "secret_id_ttl" .=? _VaultAppRoleParameters_SecretIdTTL v
-                    , "token_num_uses" .=? _VaultAppRoleParameters_TokenNumUses v
-                    , "token_ttl" .=? _VaultAppRoleParameters_TokenTTL v
-                    , "token_max_ttl" .=? _VaultAppRoleParameters_TokenMaxTTL v
-                    , "period" .=? _VaultAppRoleParameters_Period v
-                    ]
+    toJSON v = object $
+        [ "bind_secret_id" .= _VaultAppRoleParameters_BindSecretId v
+        , "policies" .= _VaultAppRoleParameters_Policies v
+        ] <> catMaybes
+        [ "secret_id_num_uses" .=? _VaultAppRoleParameters_SecretIdNumUses v
+        , "secret_id_ttl" .=? _VaultAppRoleParameters_SecretIdTTL v
+        , "token_num_uses" .=? _VaultAppRoleParameters_TokenNumUses v
+        , "token_ttl" .=? _VaultAppRoleParameters_TokenTTL v
+        , "token_max_ttl" .=? _VaultAppRoleParameters_TokenMaxTTL v
+        , "period" .=? _VaultAppRoleParameters_Period v
+        ]
       where
         (.=?) :: ToJSON x => Text -> Maybe x -> Maybe Pair
         t .=? x = (t .=) <$> x
 
 instance FromJSON VaultAppRoleParameters where
     parseJSON (Object v) =
-        VaultAppRoleParameters
-            <$> v .: "bind_secret_id"
-            <*> v .: "policies"
-            <*> v .:? "secret_id_num_uses"
-            <*> v .:? "secret_id_ttl"
-            <*> v .:? "token_num_uses"
-            <*> v .:? "token_ttl"
-            <*> v .:? "token_max_ttl"
-            <*> v .:? "period"
+        VaultAppRoleParameters <$>
+            v .: "bind_secret_id" <*>
+            v .: "policies" <*>
+            v .:? "secret_id_num_uses" <*>
+            v .:? "secret_id_ttl" <*>
+            v .:? "token_num_uses" <*>
+            v .:? "token_ttl" <*>
+            v .:? "token_max_ttl" <*>
+            v .:? "period"
     parseJSON _ = fail "Not an Object"
 
 defaultVaultAppRoleParameters :: VaultAppRoleParameters
@@ -332,23 +317,19 @@ defaultVaultAppRoleParameters = VaultAppRoleParameters True [] Nothing Nothing N
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#create-new-approle>
 vaultAppRoleCreate :: VaultConnection -> Text -> VaultAppRoleParameters -> IO ()
-vaultAppRoleCreate conn appRoleName varp = do
-    _ <-
-        runVaultRequest_ conn
-            . withStatusCodes [200, 204]
-            $ newPostRequest ("/auth/approle/role/" <> appRoleName) (Just varp)
-    pure ()
+vaultAppRoleCreate conn appRoleName varp =
+    runVaultRequest_ conn
+    . withStatusCodes [200, 204]
+    $ newPostRequest ("/auth/approle/role/" <> appRoleName) (Just varp)
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#read-approle-role-id>
 vaultAppRoleRoleIdRead :: VaultConnection -> Text -> IO VaultAppRoleId
 vaultAppRoleRoleIdRead conn appRoleName = do
-    response <-
-        runVaultRequest conn $
-            newGetRequest ("/auth/approle/role/" <> appRoleName <> "/role-id")
+    response <- runVaultRequest conn $ newGetRequest ("/auth/approle/role/" <> appRoleName <> "/role-id")
     let d = _VaultAppRoleResponse_Data response
     case parseEither parseJSON d of
-        Left err -> throwIO $ VaultException_ParseBodyError "GET" ("/auth/approle/role/" <> appRoleName <> "/role-id") (encode d) (T.pack err)
-        Right obj -> return obj
+      Left err -> throwIO $ VaultException_ParseBodyError "GET" ("/auth/approle/role/" <> appRoleName <> "/role-id") (encode d) (T.pack err)
+      Right obj -> return obj
 
 data VaultAppRoleSecretIdGenerateResponse = VaultAppRoleSecretIdGenerateResponse
     { _VaultAppRoleSecretIdGenerateResponse_SecretIdAccessor :: VaultAppRoleSecretIdAccessor
@@ -357,36 +338,31 @@ data VaultAppRoleSecretIdGenerateResponse = VaultAppRoleSecretIdGenerateResponse
 
 instance FromJSON VaultAppRoleSecretIdGenerateResponse where
     parseJSON (Object v) =
-        VaultAppRoleSecretIdGenerateResponse
-            <$> v .: "secret_id_accessor"
-            <*> v .: "secret_id"
+        VaultAppRoleSecretIdGenerateResponse <$>
+            v .: "secret_id_accessor" <*>
+            v .: "secret_id"
     parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#generate-new-secret-id>
 vaultAppRoleSecretIdGenerate :: VaultConnection -> Text -> Text -> IO VaultAppRoleSecretIdGenerateResponse
 vaultAppRoleSecretIdGenerate conn appRoleName metadata = do
-    response <-
-        runVaultRequest conn $
-            newPostRequest ("/auth/approle/role/" <> appRoleName <> "/secret-id") (Just reqBody)
+    response <- runVaultRequest conn $ newPostRequest ("/auth/approle/role/" <> appRoleName <> "/secret-id") (Just reqBody)
     let d = _VaultAppRoleResponse_Data response
     case parseEither parseJSON d of
-        Left err -> throwIO $ VaultException_ParseBodyError "POST" ("/auth/approle/role/" <> appRoleName <> "/secret-id") (encode d) (T.pack err)
-        Right obj -> return obj
-  where
-    reqBody = object ["metadata" .= metadata]
+      Left err -> throwIO $ VaultException_ParseBodyError "POST" ("/auth/approle/role/" <> appRoleName <> "/secret-id") (encode d) (T.pack err)
+      Right obj -> return obj
+    where
+    reqBody = object[ "metadata" .= metadata ]
 
 vaultSeal :: VaultConnection -> IO ()
-vaultSeal conn = do
-    _ <-
-        runVaultRequest_ conn
-            . withStatusCodes [200, 204]
-            $ newPutRequest "/sys/seal" (Nothing :: Maybe ())
-    pure ()
+vaultSeal conn =
+    runVaultRequest_ conn
+        . withStatusCodes [200, 204]
+        $ newPutRequest "/sys/seal" (Nothing :: Maybe ())
 
-{- | <https://www.vaultproject.io/docs/http/sys-unseal.html>
-
- See 'vaultUnseal'
--}
+-- | <https://www.vaultproject.io/docs/http/sys-unseal.html>
+--
+-- See 'vaultUnseal'
 data VaultUnseal
     = VaultUnseal_Key VaultUnsealKey
     | VaultUnseal_Reset
@@ -396,14 +372,12 @@ data VaultUnseal
 vaultUnseal :: VaultAddress -> VaultUnseal -> IO VaultSealStatus
 vaultUnseal addr unseal = do
     let reqBody = case unseal of
-            VaultUnseal_Key (VaultUnsealKey key) ->
-                object
-                    [ "key" .= key
-                    ]
-            VaultUnseal_Reset ->
-                object
-                    [ "reset" .= True
-                    ]
+            VaultUnseal_Key (VaultUnsealKey key) -> object
+                [ "key" .= key
+                ]
+            VaultUnseal_Reset -> object
+                [ "reset" .= True
+                ]
     manager <- newManager tlsManagerSettings
     runVaultRequest (mkUnauthenticatedVaultConnection addr manager) $
         newPutRequest "/sys/unseal" (Just reqBody)
@@ -425,21 +399,20 @@ data VaultMount a b c = VaultMount
 
 instance FromJSON VaultMountRead where
     parseJSON (Object v) =
-        VaultMount
-            <$> v .: "type"
-            <*> v .: "description"
-            <*> v .: "config"
-            <*> v .: "options"
+        VaultMount <$>
+             v .: "type" <*>
+             v .: "description" <*>
+             v .: "config" <*>
+             v .: "options"
     parseJSON _ = fail "Not an Object"
 
 instance ToJSON VaultMountWrite where
-    toJSON v =
-        object
-            [ "type" .= _VaultMount_Type v
-            , "description" .= _VaultMount_Description v
-            , "config" .= _VaultMount_Config v
-            , "options" .= _VaultMount_Options v
-            ]
+    toJSON v = object
+        [ "type" .= _VaultMount_Type v
+        , "description" .= _VaultMount_Description v
+        , "config" .= _VaultMount_Config v
+        , "options" .= _VaultMount_Options v
+        ]
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
 data VaultMountConfig a = VaultMountConfig
@@ -450,20 +423,19 @@ data VaultMountConfig a = VaultMountConfig
 
 instance FromJSON VaultMountConfigRead where
     parseJSON (Object v) =
-        VaultMountConfig
-            <$> v .: "default_lease_ttl"
-            <*> v .: "max_lease_ttl"
+        VaultMountConfig <$>
+             v .: "default_lease_ttl" <*>
+             v .: "max_lease_ttl"
     parseJSON _ = fail "Not an Object"
 
 instance ToJSON VaultMountConfigWrite where
-    toJSON v =
-        object
-            [ "default_lease_ttl" .= fmap formatSeconds (_VaultMountConfig_DefaultLeaseTtl v)
-            , "max_lease_ttl" .= fmap formatSeconds (_VaultMountConfig_MaxLeaseTtl v)
-            ]
-      where
-        formatSeconds :: Int -> String
-        formatSeconds n = show n ++ "s"
+    toJSON v = object
+        [ "default_lease_ttl" .= fmap formatSeconds (_VaultMountConfig_DefaultLeaseTtl v)
+        , "max_lease_ttl" .= fmap formatSeconds (_VaultMountConfig_MaxLeaseTtl v)
+        ]
+
+formatSeconds :: Int -> String
+formatSeconds n = show n ++ "s"
 
 newtype VaultMountOptions a = VaultMountOptions
     { _VaultMountOptions_Version :: a
@@ -482,10 +454,9 @@ instance ToJSON VaultMountConfigOptions where
             [ "version" .= (show <$> _VaultMountOptions_Version v)
             ]
 
-{- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
-
- For your convenience, the results are returned sorted (by the mount point)
--}
+-- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
+--
+-- For your convenience, the results are returned sorted (by the mount point)
 vaultMounts :: VaultConnection -> IO [(Text, VaultMountRead)]
 vaultMounts conn = do
     let reqPath = "/sys/mounts"
@@ -512,45 +483,37 @@ vaultMountTune conn mountPoint =
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
 vaultMountSetTune :: VaultConnection -> Text -> VaultMountConfigWrite -> IO ()
-vaultMountSetTune conn mountPoint mountConfig = do
-    let reqBody = mountConfig
-    _ <-
-        runVaultRequest_ conn
-            . withStatusCodes [200, 204]
-            $ newPostRequest ("/sys/mounts/" <> mountPoint <> "/tune") (Just reqBody)
-    pure ()
+vaultMountSetTune conn mountPoint mountConfig =
+    runVaultRequest_ conn
+        . withStatusCodes [200, 204]
+        $ newPostRequest ("/sys/mounts/" <> mountPoint <> "/tune") (Just mountConfig)
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
 vaultNewMount :: VaultConnection -> Text -> VaultMountWrite -> IO ()
-vaultNewMount conn mountPoint vaultMount = do
-    let reqBody = vaultMount
-    _ <-
-        runVaultRequest_ conn
-            . withStatusCodes [200, 204]
-            $ newPostRequest ("/sys/mounts/" <> mountPoint) (Just reqBody)
-    pure ()
+vaultNewMount conn mountPoint vaultMount =
+    runVaultRequest_ conn
+        . withStatusCodes [200, 204]
+        $ newPostRequest ("/sys/mounts/" <> mountPoint) (Just vaultMount)
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
 vaultUnmount :: VaultConnection -> Text -> IO ()
-vaultUnmount conn mountPoint = do
-    _ <-
-        runVaultRequest_ conn
-            . withStatusCodes [200, 204]
-            . newDeleteRequest
-            $ "/sys/mounts/" <> mountPoint
-    pure ()
+vaultUnmount conn mountPoint =
+    runVaultRequest_ conn
+        . withStatusCodes [200, 204]
+        . newDeleteRequest
+        $ "/sys/mounts/" <> mountPoint
 
 data VaultSecretMetadata = VaultSecretMetadata
     { _VaultSecretMetadata_leaseDuration :: Int
     , _VaultSecretMetadata_leaseId :: Text
     , _VauleSecretMetadata_renewable :: Bool
     }
-    deriving (Show, Eq {- TODO Ord -})
+    deriving (Show, Eq {- TODO Ord #-})
 
 instance FromJSON VaultSecretMetadata where
     parseJSON (Object v) =
-        VaultSecretMetadata
-            <$> v .: "lease_duration"
-            <*> v .: "lease_id"
-            <*> v .: "renewable"
+        VaultSecretMetadata <$>
+            v .: "lease_duration" <*>
+            v .: "lease_id" <*>
+            v .: "renewable"
     parseJSON _ = fail "Not an Object"

@@ -3,56 +3,57 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Network.VaultTool.VaultServerProcess (
-    VaultServerProcess,
-    launchVaultServerProcess,
-    shutdownVaultServerProcess,
-    withVaultServerProcess,
-    VaultBackendConfig,
-    withVaultConfigFile,
-    vaultConfigDefaultAddress,
-    vaultAddress,
-    readVaultBackendConfig,
-    readVaultUnsealKeys,
-) where
+module Network.VaultTool.VaultServerProcess
+    ( VaultServerProcess
+    , launchVaultServerProcess
+    , shutdownVaultServerProcess
+    , withVaultServerProcess
+
+    , VaultBackendConfig
+    , withVaultConfigFile
+    , vaultConfigDefaultAddress
+    , vaultAddress
+
+    , readVaultBackendConfig
+    , readVaultUnsealKeys
+    ) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async
-import Control.Exception (Exception, Handler (Handler), IOException, bracket, bracketOnError, catches, throwIO, try)
+import Control.Exception (Exception, IOException, catches, Handler(Handler), bracket, bracketOnError, throwIO, try)
 import Control.Monad (forever)
 import Data.Aeson
-import qualified Data.ByteString.Lazy as BL
 import Data.Functor ((<&>))
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
 import Network.HTTP.Client (HttpException)
 import System.Exit (ExitCode)
 import System.FilePath ((</>))
 import System.IO (Handle, hClose)
 import System.IO.Temp
 import System.Process
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
 
 import Network.VaultTool
 
-{- | The ""backend"" section of the Vault server configuration.
-
- See <https://www.vaultproject.io/docs/config/index.html>
-
- > {
- >   "consul": {
- >     "address": "127.0.0.1:8500",
- >     "path": "vault"
- >   }
- > }
-
- > {
- >   "file": {
- >     "path": "vault-storage"
- >   }
- > }
--}
+-- | The ""backend"" section of the Vault server configuration.
+--
+-- See <https://www.vaultproject.io/docs/config/index.html>
+--
+-- > {
+-- >   "consul": {
+-- >     "address": "127.0.0.1:8500",
+-- >     "path": "vault"
+-- >   }
+-- > }
+--
+-- > {
+-- >   "file": {
+-- >     "path": "vault-storage"
+-- >   }
+-- > }
 type VaultBackendConfig = Value
 
 data VaultConfig = VaultConfig
@@ -62,19 +63,16 @@ data VaultConfig = VaultConfig
     deriving (Show)
 
 instance ToJSON VaultConfig where
-    toJSON VaultConfig{..} =
-        object
-            [ "backend" .= _VaultConfig_Backend
-            , "listener"
-                .= object
-                    [ "tcp"
-                        .= object
-                            [ "tls_disable" .= T.pack "true"
-                            , "address" .= _VaultConfig_ListenAddress
-                            ]
-                    ]
-            , "disable_mlock" .= True
+    toJSON VaultConfig{..} = object
+        [ "backend" .= _VaultConfig_Backend
+        , "listener" .= object
+            [ "tcp" .= object
+                [ "tls_disable" .= T.pack "true"
+                , "address" .= _VaultConfig_ListenAddress
+                ]
             ]
+        , "disable_mlock" .= True
+        ]
 
 vaultConfigDefaultAddress :: VaultBackendConfig -> VaultConfig
 vaultConfigDefaultAddress b =
@@ -82,15 +80,14 @@ vaultConfigDefaultAddress b =
         { _VaultConfig_Backend = b
         , _VaultConfig_ListenAddress = defaultAddress
         }
-  where
+    where
     defaultAddress = "127.0.0.1:8200"
 
-{- | Get the address that can be used to connect to a running Vault server
- launched with the specified config.
-
- The returned value will begin with ""http://"" or ""https://"" (depending on
- the config)
--}
+-- | Get the address that can be used to connect to a running Vault server
+-- launched with the specified config.
+--
+-- The returned value will begin with ""http://"" or ""https://"" (depending on
+-- the config)
 vaultAddress :: VaultConfig -> VaultAddress
 vaultAddress VaultConfig{_VaultConfig_ListenAddress} =
     VaultAddress ("http://" `T.append` _VaultConfig_ListenAddress)
@@ -132,8 +129,7 @@ instance Exception VaultServerLaunchException
 
 withVaultServerProcess :: Maybe FilePath -> FilePath -> VaultAddress -> IO a -> IO a
 withVaultServerProcess mbVaultExe vaultConfigFile addr act = do
-    bracket
-        (launchVaultServerProcess mbVaultExe vaultConfigFile addr)
+    bracket (launchVaultServerProcess mbVaultExe vaultConfigFile addr)
         shutdownVaultServerProcess
         (const act)
 
@@ -147,7 +143,7 @@ launchVaultServerProcess mbVaultExe vaultConfigFile addr = do
                 withAsync (checkProcessFailureThread vs) $ \startupErrorA -> do
                     _ <- waitAnyCancel [waitUntilRunningA, startupErrorA]
                     pure vs
-  where
+    where
     vaultExe = fromMaybe "vault" mbVaultExe
     waitUntilRunningThread stdoutH = do
         withAsync (waitUntilVaultStarted stdoutH) $ \startA -> do
@@ -196,26 +192,22 @@ launchVaultServerProcess mbVaultExe vaultConfigFile addr = do
 
 execProcess :: FilePath -> FilePath -> IO VaultServerProcess
 execProcess vaultExe vaultConfigFile = do
-    tryResult <-
-        try $
-            createProcess $
-                (proc vaultExe ["server", "-config=" ++ vaultConfigFile])
-                    { env = Just []
-                    , std_in = CreatePipe
-                    , std_out = CreatePipe
-                    , std_err = CreatePipe
-                    , close_fds = True
-                    }
+    tryResult <- try $ createProcess $ (proc vaultExe ["server", "-config=" ++ vaultConfigFile])
+                                            { env = Just []
+                                            , std_in = CreatePipe
+                                            , std_out = CreatePipe
+                                            , std_err = CreatePipe
+                                            , close_fds = True
+                                            }
     case tryResult of
         Left ex -> throwIO $ VaultServerLaunchException_ExecFailure ex
         Right (Just stdinH, Just stdoutH, Just stderrH, processHandle) ->
-            pure
-                VaultServerProcess
-                    { vs_processHandle = processHandle
-                    , vs_stdinH = stdinH
-                    , vs_stdoutH = stdoutH
-                    , vs_stderrH = stderrH
-                    }
+            pure VaultServerProcess
+                { vs_processHandle = processHandle
+                , vs_stdinH = stdinH
+                , vs_stdoutH = stdoutH
+                , vs_stderrH = stderrH
+                }
         Right _ -> error "execProcess: The Impossible Happened"
 
 shutdownVaultServerProcess :: VaultServerProcess -> IO ()
@@ -229,7 +221,7 @@ shutdownVaultServerProcess vs = do
 
 vaultIsRunning :: VaultAddress -> IO Bool
 vaultIsRunning addr = do
-    (vaultHealth addr >> pure True)
-        `catches` [ Handler $ \(_ :: HttpException) -> pure False
-                  , Handler $ \(_ :: VaultException) -> pure False
-                  ]
+    (vaultHealth addr >> pure True) `catches`
+        [ Handler $ \(_ :: HttpException) -> pure False
+        , Handler $ \(_ :: VaultException) -> pure False
+        ]

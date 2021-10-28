@@ -18,13 +18,11 @@ import Network.VaultTool.VaultServerProcess
 
 withTempVaultBackend :: (VaultBackendConfig -> IO a) -> IO a
 withTempVaultBackend action = withSystemTempDirectory "hs_vault" $ \tmpDir -> do
-    let backendConfig =
-            object
-                [ "file"
-                    .= object
-                        [ "path" .= tmpDir
-                        ]
+    let backendConfig = object
+            [ "file" .= object
+                [ "path" .= tmpDir
                 ]
+            ]
     action backendConfig
 
 main :: IO ()
@@ -41,11 +39,10 @@ main = withTempVaultBackend $ \vaultBackendConfig -> do
 
     putStrLn "Ok"
 
-{- | The vault must be a newly created, non-initialized vault
-
- TODO It would be better to break this into lots of individual unit tests
- instead of this one big-ass test
--}
+-- | The vault must be a newly created, non-initialized vault
+--
+-- TODO It would be better to break this into lots of individual unit tests
+-- instead of this one big-ass test
 talkToVault :: VaultAddress -> IO ()
 talkToVault addr = do
     health <- vaultHealth addr
@@ -56,65 +53,53 @@ talkToVault addr = do
     length unsealKeys @?= 4
 
     status0 <- vaultSealStatus addr
-    status0
-        @?= VaultSealStatus
-            { _VaultSealStatus_Sealed = True
-            , _VaultSealStatus_T = 2
-            , _VaultSealStatus_N = 4
-            , _VaultSealStatus_Progress = 0
-            }
+    status0 @?= VaultSealStatus
+        { _VaultSealStatus_Sealed = True
+        , _VaultSealStatus_T = 2
+        , _VaultSealStatus_N = 4
+        , _VaultSealStatus_Progress = 0
+        }
 
     status1 <- vaultUnseal addr (VaultUnseal_Key (unsealKeys !! 0))
-    status1
-        @?= VaultSealStatus
-            { _VaultSealStatus_Sealed = True
-            , _VaultSealStatus_T = 2
-            , _VaultSealStatus_N = 4
-            , _VaultSealStatus_Progress = 1
-            }
+    status1 @?= VaultSealStatus
+        { _VaultSealStatus_Sealed = True
+        , _VaultSealStatus_T = 2
+        , _VaultSealStatus_N = 4
+        , _VaultSealStatus_Progress = 1
+        }
 
     status2 <- vaultUnseal addr VaultUnseal_Reset
-    status2
-        @?= VaultSealStatus
-            { _VaultSealStatus_Sealed = True
-            , _VaultSealStatus_T = 2
-            , _VaultSealStatus_N = 4
-            , _VaultSealStatus_Progress = 0
-            }
+    status2 @?= VaultSealStatus
+        { _VaultSealStatus_Sealed = True
+        , _VaultSealStatus_T = 2
+        , _VaultSealStatus_N = 4
+        , _VaultSealStatus_Progress = 0
+        }
 
     status3 <- vaultUnseal addr (VaultUnseal_Key (unsealKeys !! 1))
-    status3
-        @?= VaultSealStatus
-            { _VaultSealStatus_Sealed = True
-            , _VaultSealStatus_T = 2
-            , _VaultSealStatus_N = 4
-            , _VaultSealStatus_Progress = 1
-            }
+    status3 @?= VaultSealStatus
+        { _VaultSealStatus_Sealed = True
+        , _VaultSealStatus_T = 2
+        , _VaultSealStatus_N = 4
+        , _VaultSealStatus_Progress = 1
+        }
 
     status4 <- vaultUnseal addr (VaultUnseal_Key (unsealKeys !! 2))
-    status4
-        @?= VaultSealStatus
-            { _VaultSealStatus_Sealed = False
-            , _VaultSealStatus_T = 2
-            , _VaultSealStatus_N = 4
-            , _VaultSealStatus_Progress = 0
-            }
+    status4 @?= VaultSealStatus
+        { _VaultSealStatus_Sealed = False
+        , _VaultSealStatus_T = 2
+        , _VaultSealStatus_N = 4
+        , _VaultSealStatus_Progress = 0
+        }
 
     conn <- connectToVault addr rootToken
 
-    vaultNewMount
-        conn
-        "secret"
-        VaultMount
-            { _VaultMount_Type = "kv"
-            , _VaultMount_Description = Just "key/value secret storage"
-            , _VaultMount_Config = Nothing
-            , _VaultMount_Options =
-                Just
-                    VaultMountOptions
-                        { _VaultMountOptions_Version = Just 2
-                        }
-            }
+    vaultNewMount conn "secret" VaultMount
+        { _VaultMount_Type = "kv"
+        , _VaultMount_Description = Just "key/value secret storage"
+        , _VaultMount_Config = Nothing
+        , _VaultMount_Options = Just VaultMountOptions { _VaultMountOptions_Version = Just 2 }
+        }
 
     allMounts <- vaultMounts conn
 
@@ -126,20 +111,15 @@ talkToVault addr = do
     _ <- vaultMountTune conn "secret"
     _ <- vaultMountTune conn "sys"
 
-    vaultNewMount
-        conn
-        "mymount"
-        VaultMount
-            { _VaultMount_Type = "generic"
-            , _VaultMount_Description = Just "blah blah blah"
-            , _VaultMount_Config =
-                Just
-                    VaultMountConfig
-                        { _VaultMountConfig_DefaultLeaseTtl = Just 42
-                        , _VaultMountConfig_MaxLeaseTtl = Nothing
-                        }
-            , _VaultMount_Options = Nothing
+    vaultNewMount conn "mymount" VaultMount
+        { _VaultMount_Type = "generic"
+        , _VaultMount_Description = Just "blah blah blah"
+        , _VaultMount_Config = Just VaultMountConfig
+            { _VaultMountConfig_DefaultLeaseTtl = Just 42
+            , _VaultMountConfig_MaxLeaseTtl = Nothing
             }
+        , _VaultMount_Options = Nothing
+        }
 
     mounts2 <- vaultMounts conn
     fmap _VaultMount_Description (lookup "mymount/" mounts2) @?= Just "blah blah blah"
@@ -147,13 +127,10 @@ talkToVault addr = do
     t <- vaultMountTune conn "mymount"
     _VaultMountConfig_DefaultLeaseTtl t @?= 42
 
-    vaultMountSetTune
-        conn
-        "mymount"
-        VaultMountConfig
-            { _VaultMountConfig_DefaultLeaseTtl = Just 52
-            , _VaultMountConfig_MaxLeaseTtl = Nothing
-            }
+    vaultMountSetTune conn "mymount" VaultMountConfig
+        { _VaultMountConfig_DefaultLeaseTtl = Just 52
+        , _VaultMountConfig_MaxLeaseTtl = Nothing
+        }
 
     t2 <- vaultMountTune conn "mymount"
     _VaultMountConfig_DefaultLeaseTtl t2 @?= 52
@@ -202,13 +179,12 @@ talkToVault addr = do
     assertBool "Secret not in list" $ not (pathBig `elem` keys2)
 
     keys3 <- vaultListRecursive conn (mkVaultSecretPath "foo")
-    sort keys3
-        @?= sort
-            [ pathFooBarA
-            , pathFooBarB
-            , pathFooBarABCDEFG
-            , pathFooQuackDuck
-            ]
+    sort keys3 @?= sort
+        [ pathFooBarA
+        , pathFooBarB
+        , pathFooBarABCDEFG
+        , pathFooQuackDuck
+        ]
 
     vaultAuthEnable conn "approle"
 
@@ -231,13 +207,12 @@ talkToVault addr = do
     vaultSeal conn
 
     status5 <- vaultSealStatus addr
-    status5
-        @?= VaultSealStatus
-            { _VaultSealStatus_Sealed = True
-            , _VaultSealStatus_T = 2
-            , _VaultSealStatus_N = 4
-            , _VaultSealStatus_Progress = 0
-            }
+    status5 @?= VaultSealStatus
+        { _VaultSealStatus_Sealed = True
+        , _VaultSealStatus_T = 2
+        , _VaultSealStatus_N = 4
+        , _VaultSealStatus_Progress = 0
+        }
 
     health2 <- vaultHealth addr
     _VaultHealth_Initialized health2 @?= True
