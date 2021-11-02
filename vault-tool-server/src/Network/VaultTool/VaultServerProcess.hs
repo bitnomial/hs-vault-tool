@@ -23,7 +23,6 @@ import Control.Concurrent.Async
 import Control.Exception (Exception, IOException, catches, Handler(Handler), bracket, bracketOnError, throwIO, try)
 import Control.Monad (forever)
 import Data.Aeson
-import Data.Functor ((<&>))
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Network.HTTP.Client (HttpException)
@@ -102,7 +101,7 @@ readVaultBackendConfig file = do
 -- | File should have one line per key (blank lines are ignored)
 readVaultUnsealKeys :: FilePath -> IO [VaultUnsealKey]
 readVaultUnsealKeys file =
-    T.readFile file <&> (map VaultUnsealKey . filter (not . T.null) . map T.strip . T.lines)
+    map VaultUnsealKey . filter (not . T.null) . map T.strip . T.lines <$> T.readFile file
 
 withVaultConfigFile :: VaultConfig -> (FilePath -> IO a) -> IO a
 withVaultConfigFile vaultConfig action = do

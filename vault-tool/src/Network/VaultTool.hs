@@ -66,6 +66,7 @@ import Data.Maybe (catMaybes)
 import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import qualified Data.HashMap.Strict as H
+import Text.Read (readEither)
 
 import Network.VaultTool.Internal
 import Network.VaultTool.Types
@@ -83,14 +84,13 @@ data VaultHealth = VaultHealth
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultHealth where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultHealth" $ \v ->
         VaultHealth <$>
              v .: "version" <*>
              v .: "server_time_utc" <*>
              v .: "initialized" <*>
              v .: "sealed" <*>
              v .: "standby"
-    parseJSON _ = fail "Not an Object"
 
 -- | https://www.vaultproject.io/docs/http/sys-health.html
 vaultHealth :: VaultAddress -> IO VaultHealth
@@ -128,11 +128,10 @@ data VaultInitResponse = VaultInitResponse
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultInitResponse where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultInitResponse" $ \v ->
         VaultInitResponse <$>
              v .: "keys" <*>
              v .: "root_token"
-    parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/docs/http/sys-init.html>
 vaultInit
@@ -166,13 +165,12 @@ data VaultSealStatus = VaultSealStatus
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultSealStatus where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultSealStatus" $ \v ->
         VaultSealStatus <$>
              v .: "sealed" <*>
              v .: "t" <*>
              v .: "n" <*>
              v .: "progress"
-    parseJSON _ = fail "Not an Object"
 
 vaultSealStatus :: VaultAddress -> IO VaultSealStatus
 vaultSealStatus addr = do
@@ -191,13 +189,12 @@ data VaultAuth = VaultAuth
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultAuth where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultAuth" $ \v ->
         VaultAuth <$>
             v .: "renewable" <*>
             v .: "lease_duration" <*>
             v .: "policies" <*>
             v .: "client_token"
-    parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html>
 --
@@ -214,7 +211,7 @@ data VaultAppRoleResponse = VaultAppRoleResponse
     deriving (Show, Eq)
 
 instance FromJSON VaultAppRoleResponse where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultAppRoleResponse" $ \v ->
         VaultAppRoleResponse <$>
             v .:? "auth" <*>
             v .: "warnings" <*>
@@ -223,7 +220,6 @@ instance FromJSON VaultAppRoleResponse where
             v .: "lease_duration" <*>
             v .: "renewable" <*>
             v .: "lease_id"
-    parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/docs/auth/approle.html>
 vaultAppRoleLogin :: VaultAddress -> Manager -> VaultAppRoleId -> VaultAppRoleSecretId -> IO VaultAuthToken
@@ -264,10 +260,9 @@ newtype VaultAppRoleListResponse = VaultAppRoleListResponse
     { _VaultAppRoleListResponse_AppRoles :: [Text] }
 
 instance FromJSON VaultAppRoleListResponse where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultAppRoleListResponse" $ \v ->
         VaultAppRoleListResponse <$>
             v .: "keys"
-    parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#create-new-approle>
 --
@@ -300,7 +295,7 @@ instance ToJSON VaultAppRoleParameters where
         t .=? x = (t .=) <$> x
 
 instance FromJSON VaultAppRoleParameters where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultAppRoleParameters" $ \v ->
         VaultAppRoleParameters <$>
             v .: "bind_secret_id" <*>
             v .: "policies" <*>
@@ -310,7 +305,6 @@ instance FromJSON VaultAppRoleParameters where
             v .:? "token_ttl" <*>
             v .:? "token_max_ttl" <*>
             v .:? "period"
-    parseJSON _ = fail "Not an Object"
 
 defaultVaultAppRoleParameters :: VaultAppRoleParameters
 defaultVaultAppRoleParameters = VaultAppRoleParameters True [] Nothing Nothing Nothing Nothing Nothing Nothing
@@ -337,11 +331,10 @@ data VaultAppRoleSecretIdGenerateResponse = VaultAppRoleSecretIdGenerateResponse
     }
 
 instance FromJSON VaultAppRoleSecretIdGenerateResponse where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultAppRoleSecretIdGenerateResponse" $ \v ->
         VaultAppRoleSecretIdGenerateResponse <$>
             v .: "secret_id_accessor" <*>
             v .: "secret_id"
-    parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#generate-new-secret-id>
 vaultAppRoleSecretIdGenerate :: VaultConnection -> Text -> Text -> IO VaultAppRoleSecretIdGenerateResponse
@@ -398,13 +391,12 @@ data VaultMount a b c = VaultMount
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultMountRead where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultMountRead" $ \v ->
         VaultMount <$>
              v .: "type" <*>
              v .: "description" <*>
              v .: "config" <*>
              v .: "options"
-    parseJSON _ = fail "Not an Object"
 
 instance ToJSON VaultMountWrite where
     toJSON v = object
@@ -422,11 +414,10 @@ data VaultMountConfig a = VaultMountConfig
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultMountConfigRead where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultMountConfigRead" $ \v ->
         VaultMountConfig <$>
              v .: "default_lease_ttl" <*>
              v .: "max_lease_ttl"
-    parseJSON _ = fail "Not an Object"
 
 instance ToJSON VaultMountConfigWrite where
     toJSON v = object
@@ -443,10 +434,8 @@ newtype VaultMountOptions a = VaultMountOptions
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultMountConfigOptions where
-    parseJSON (Object v) =
-        VaultMountOptions
-            <$> (read <$> v .: "version")
-    parseJSON _ = fail "Not an Object"
+    parseJSON = withObject "VaultMountConfigOptions" $ \v ->
+        VaultMountOptions <$> (either fail pure . readEither <$> v .: "version")
 
 instance ToJSON VaultMountConfigOptions where
     toJSON v =
@@ -508,12 +497,11 @@ data VaultSecretMetadata = VaultSecretMetadata
     , _VaultSecretMetadata_leaseId :: Text
     , _VauleSecretMetadata_renewable :: Bool
     }
-    deriving (Show, Eq {- TODO Ord #-})
+    deriving (Show, Eq {- TODO Ord -})
 
 instance FromJSON VaultSecretMetadata where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultSecretMetadata" $ \v ->
         VaultSecretMetadata <$>
             v .: "lease_duration" <*>
             v .: "lease_id" <*>
             v .: "renewable"
-    parseJSON _ = fail "Not an Object"

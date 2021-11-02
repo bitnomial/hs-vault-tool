@@ -75,8 +75,8 @@ newtype VaultAppRoleId = VaultAppRoleId { unVaultAppRoleId :: Text }
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultAppRoleId where
-    parseJSON (Object v) = VaultAppRoleId <$> v .: "role_id"
-    parseJSON _ = fail "Not an Object"
+    parseJSON = withObject "VaultAppRoleId" $ \v ->
+        VaultAppRoleId <$> v .: "role_id"
 
 instance ToJSON VaultAppRoleId where
     toJSON v = object [ "role_id" .= unVaultAppRoleId v ]

@@ -4,7 +4,9 @@
 
 module Main where
 
+import Control.Exception (catch)
 import Data.Aeson
+import Data.Functor (($>))
 import Data.List (sort)
 import Data.Text (Text)
 import GHC.Generics
@@ -143,22 +145,15 @@ talkToVault addr = do
     let pathBig = mkVaultSecretPath "big"
     vaultWrite conn pathBig (object ["A" .= 'a', "B" .= 'b'])
 
-    (_, r) <- vaultRead conn pathBig
-    case r of
-        Left err -> assertFailure $ "Failed to parse secret/big: " ++ (show err)
-        Right x -> vsvData x @?= object ["A" .= 'a', "B" .= 'b']
+    r <- vaultRead conn pathBig
+    vsvData r @?= object ["A" .= 'a', "B" .= 'b']
 
     let pathFun = mkVaultSecretPath "fun"
     vaultWrite conn pathFun (FunStuff "fun" [1, 2, 3])
-    (_, r2) <- vaultRead conn pathFun
-    case r2 of
-        Left err -> assertFailure $ "Failed to parse secret/fun: " ++ (show err)
-        Right x -> vsvData x @?= (FunStuff "fun" [1, 2, 3])
+    r2 <- vaultRead conn pathFun
+    vsvData r2 @?= (FunStuff "fun" [1, 2, 3])
 
-    (_, r3) <- vaultRead conn pathBig
-    case r3 of
-        Left (v, _) -> vsvData <$> fromJSON v @?= Success (object ["A" .= 'a', "B" .= 'b'])
-        Right (x :: VaultSecretVersion FunStuff) -> assertFailure $ "Somehow parsed an impossible value" ++ show x
+    throws (vaultRead conn pathBig :: IO (VaultSecretVersion FunStuff)) >>= (@?= True)
 
     let pathFooBarA = mkVaultSecretPath "foo/bar/a"
         pathFooBarB = mkVaultSecretPath "foo/bar/b"
@@ -199,10 +194,7 @@ talkToVault addr = do
     secretId <- _VaultAppRoleSecretIdGenerateResponse_SecretId <$> vaultAppRoleSecretIdGenerate conn "foo-role" ""
 
     arConn <- connectToVaultAppRole addr roleId secretId
-    (_, ar1) <- vaultRead conn pathSmall
-    case ar1 of
-        Left (v, _) -> vsvData <$> fromJSON v @?= Success (object ["X" .= 'x'])
-        Right (x :: VaultSecretVersion FunStuff) -> assertFailure $ "Somehow parsed an impossible value" ++ show x
+    throws (vaultRead arConn pathSmall :: IO (VaultSecretVersion FunStuff)) >>= (@?= True)
 
     vaultSeal conn
 
@@ -229,3 +221,6 @@ instance ToJSON FunStuff
 
 mkVaultSecretPath :: Text -> VaultSecretPath
 mkVaultSecretPath searchPath = VaultSecretPath (VaultMountedPath "secret", VaultSearchPath searchPath)
+
+throws :: IO a -> IO Bool
+throws io = catch (io $> False) $ \(_e :: VaultException) -> pure True

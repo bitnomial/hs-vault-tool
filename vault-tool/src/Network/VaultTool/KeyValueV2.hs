@@ -20,12 +20,9 @@ module Network.VaultTool.KeyValueV2 (
 ) where
 
 import Control.Applicative ((<|>))
-import Control.Exception (throwIO)
 import Data.Aeson (
     FromJSON,
     ToJSON,
-    Value (..),
-    encode,
     object,
     parseJSON,
     toJSON,
@@ -33,7 +30,6 @@ import Data.Aeson (
     (.:),
     (.=),
  )
-import Data.Aeson.Types (parseEither)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
@@ -49,7 +45,6 @@ import Network.VaultTool.Internal (
  )
 import Network.VaultTool.Types (
     VaultConnection,
-    VaultException (..),
     VaultMountedPath (..),
     VaultSearchPath (..),
     VaultSecretPath (..),
@@ -63,12 +58,11 @@ data VaultSecretMetadata = VaultSecretMetadata
     deriving (Show, Eq {- TODO Ord -})
 
 instance FromJSON VaultSecretMetadata where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultSecretMetadata" $ \v ->
         VaultSecretMetadata
             <$> v .: "lease_duration"
             <*> v .: "lease_id"
             <*> v .: "renewable"
-    parseJSON _ = fail "Not an Object"
 
 data VaultSecretVersion a = VaultSecretVersion
     { vsvData :: a
@@ -104,22 +98,7 @@ vaultRead ::
     FromJSON a =>
     VaultConnection ->
     VaultSecretPath ->
-    -- | A 'Left' result
-    -- means that the
-    -- secret's "data"
-    -- could not be
-    -- parsed into the
-    -- data structure
-    -- that you
-    -- requested.
-    --
-    -- You will get the
-    -- "data" as a raw
-    -- 'Value' as well as
-    -- the error message
-    -- from the parse
-    -- failure
-    IO (VaultSecretMetadata, Either (Value, String) (VaultSecretVersion a))
+    IO (VaultSecretVersion a)
 vaultRead conn path = vaultReadVersion conn path Nothing
 
 vaultReadVersion ::
@@ -127,35 +106,11 @@ vaultReadVersion ::
     VaultConnection ->
     VaultSecretPath ->
     Maybe Int ->
-    -- | A 'Left' result
-    -- means that the
-    -- secret's "data"
-    -- could not be
-    -- parsed into the
-    -- data structure
-    -- that you
-    -- requested.
-    --
-    -- You will get the
-    -- "data" as a raw
-    -- 'Value' as well as
-    -- the error message
-    -- from the parse
-    -- failure
-    IO (VaultSecretMetadata, Either (Value, String) (VaultSecretVersion a))
-vaultReadVersion conn (VaultSecretPath (mountedPath, searchPath)) version = do
-    let path = vaultActionPath ReadSecretVersion mountedPath searchPath <> queryParams
-    rspObj <-
-        runVaultRequest conn $
-            newGetRequest path
-    case parseEither parseJSON (Object rspObj) of
-        Left err -> throwIO $ VaultException_ParseBodyError "GET" path (encode rspObj) (T.pack err)
-        Right metadata -> case parseEither (.: "data") rspObj of
-            Left err -> throwIO $ VaultException_ParseBodyError "GET" path (encode rspObj) (T.pack err)
-            Right dataObj -> case parseEither parseJSON (Object dataObj) of
-                Left err -> pure (metadata, Left (Object dataObj, err))
-                Right data_ -> pure (metadata, Right data_)
+    IO (VaultSecretVersion a)
+vaultReadVersion conn (VaultSecretPath (mountedPath, searchPath)) version =
+    runVaultRequest conn (newGetRequest path) >>= \(DataWrapper x) -> pure x
   where
+    path = vaultActionPath ReadSecretVersion mountedPath searchPath <> queryParams
     queryParams = case version of
         Nothing -> ""
         Just n -> "?version=" <> T.pack (show n)
@@ -165,28 +120,28 @@ newtype DataWrapper a = DataWrapper a
 instance ToJSON a => ToJSON (DataWrapper a) where
     toJSON (DataWrapper x) = object ["data" .= x]
 
+instance FromJSON a => FromJSON (DataWrapper a) where
+    parseJSON = withObject "DataWrapper" $ fmap DataWrapper . (.: "data")
+
 {- | <https://www.vaultproject.io/docs/secrets/generic/index.html>
 
  The value that you give must encode as a JSON object
 -}
 vaultWrite :: ToJSON a => VaultConnection -> VaultSecretPath -> a -> IO ()
-vaultWrite conn (VaultSecretPath (mountedPath, searchPath)) value = do
-    let reqBody = value
-    let path = vaultActionPath WriteSecret mountedPath searchPath
-    _ <-
-        runVaultRequest_ conn
-            . withStatusCodes [200, 204]
-            $ newPostRequest path (Just $ DataWrapper reqBody)
-    pure ()
+vaultWrite conn (VaultSecretPath (mountedPath, searchPath)) = do
+    runVaultRequest_ conn
+        . withStatusCodes [200, 204]
+        . newPostRequest (vaultActionPath WriteSecret mountedPath searchPath)
+        . Just
+        . DataWrapper
 
 newtype VaultListResult = VaultListResult [Text]
 
 instance FromJSON VaultListResult where
-    parseJSON (Object v) = do
+    parseJSON = withObject "VaultListResult" $ \v -> do
         data_ <- v .: "data"
         keys <- data_ .: "keys"
         pure (VaultListResult keys)
-    parseJSON _ = fail "Not an Object"
 
 {- | <https://www.vaultproject.io/docs/secrets/generic/index.html>
 
@@ -244,12 +199,9 @@ isFolder (VaultSecretPath (_, VaultSearchPath searchPath))
 -- | <https://www.vaultproject.io/docs/secrets/generic/index.html>
 vaultDelete :: VaultConnection -> VaultSecretPath -> IO ()
 vaultDelete conn (VaultSecretPath (mountedPath, searchPath)) = do
-    let path = vaultActionPath HardDeleteSecret mountedPath searchPath
-    _ <-
-        runVaultRequest_ conn
-            . withStatusCodes [204]
-            $ newDeleteRequest path
-    pure ()
+    runVaultRequest_ conn
+        . withStatusCodes [204]
+        $ newDeleteRequest (vaultActionPath HardDeleteSecret mountedPath searchPath)
 
 data VaultAction
     = WriteConfig
