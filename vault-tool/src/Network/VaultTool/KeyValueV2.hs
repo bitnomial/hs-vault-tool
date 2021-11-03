@@ -39,12 +39,13 @@ import Network.VaultTool.Internal (
     newGetRequest,
     newListRequest,
     newPostRequest,
-    runVaultRequest,
-    runVaultRequest_,
+    runVaultRequestAuthenticated,
+    runVaultRequestAuthenticated_,
     withStatusCodes,
  )
 import Network.VaultTool.Types (
     VaultConnection,
+    Authenticated,
     VaultMountedPath (..),
     VaultSearchPath (..),
     VaultSecretPath (..),
@@ -96,19 +97,19 @@ instance FromJSON VaultSecretVersionMetadata where
 
 vaultRead ::
     FromJSON a =>
-    VaultConnection ->
+    VaultConnection Authenticated ->
     VaultSecretPath ->
     IO (VaultSecretVersion a)
 vaultRead conn path = vaultReadVersion conn path Nothing
 
 vaultReadVersion ::
     FromJSON a =>
-    VaultConnection ->
+    VaultConnection Authenticated ->
     VaultSecretPath ->
     Maybe Int ->
     IO (VaultSecretVersion a)
 vaultReadVersion conn (VaultSecretPath (mountedPath, searchPath)) version =
-    runVaultRequest conn (newGetRequest path) >>= \(DataWrapper x) -> pure x
+    runVaultRequestAuthenticated conn (newGetRequest path) >>= \(DataWrapper x) -> pure x
   where
     path = vaultActionPath ReadSecretVersion mountedPath searchPath <> queryParams
     queryParams = case version of
@@ -127,9 +128,9 @@ instance FromJSON a => FromJSON (DataWrapper a) where
 
  The value that you give must encode as a JSON object
 -}
-vaultWrite :: ToJSON a => VaultConnection -> VaultSecretPath -> a -> IO ()
+vaultWrite :: ToJSON a => VaultConnection Authenticated -> VaultSecretPath -> a -> IO ()
 vaultWrite conn (VaultSecretPath (mountedPath, searchPath)) = do
-    runVaultRequest_ conn
+    runVaultRequestAuthenticated_ conn
         . withStatusCodes [200, 204]
         . newPostRequest (vaultActionPath WriteSecret mountedPath searchPath)
         . Just
@@ -156,11 +157,11 @@ instance FromJSON VaultListResult where
 
  To recursively retrieve all of the secrets use 'vaultListRecursive'
 -}
-vaultList :: VaultConnection -> VaultSecretPath -> IO [VaultSecretPath]
+vaultList :: VaultConnection Authenticated -> VaultSecretPath -> IO [VaultSecretPath]
 vaultList conn (VaultSecretPath (VaultMountedPath mountedPath, VaultSearchPath searchPath)) = do
     let path = vaultActionPath ListSecrets (VaultMountedPath mountedPath) (VaultSearchPath searchPath)
     VaultListResult keys <-
-        runVaultRequest conn $
+        runVaultRequestAuthenticated conn $
             newListRequest path
     pure $ map (VaultSecretPath . fullSecretPath) keys
   where
@@ -177,7 +178,7 @@ vaultList conn (VaultSecretPath (VaultMountedPath mountedPath, VaultSearchPath s
 
  The order of the results is unspecified.
 -}
-vaultListRecursive :: VaultConnection -> VaultSecretPath -> IO [VaultSecretPath]
+vaultListRecursive :: VaultConnection Authenticated -> VaultSecretPath -> IO [VaultSecretPath]
 vaultListRecursive conn location = do
     paths <- vaultList conn location
     flip concatMapM paths $ \path -> do
@@ -197,9 +198,9 @@ isFolder (VaultSecretPath (_, VaultSearchPath searchPath))
     | otherwise = T.last searchPath == '/'
 
 -- | <https://www.vaultproject.io/docs/secrets/generic/index.html>
-vaultDelete :: VaultConnection -> VaultSecretPath -> IO ()
+vaultDelete :: VaultConnection Authenticated -> VaultSecretPath -> IO ()
 vaultDelete conn (VaultSecretPath (mountedPath, searchPath)) = do
-    runVaultRequest_ conn
+    runVaultRequestAuthenticated_ conn
         . withStatusCodes [204]
         $ newDeleteRequest (vaultActionPath HardDeleteSecret mountedPath searchPath)
 

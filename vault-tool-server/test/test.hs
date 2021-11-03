@@ -47,14 +47,18 @@ main = withTempVaultBackend $ \vaultBackendConfig -> do
 -- instead of this one big-ass test
 talkToVault :: VaultAddress -> IO ()
 talkToVault addr = do
-    health <- vaultHealth addr
+    manager <- defaultManager
+
+    let unauthConn = UnauthenticatedVaultConnection manager addr
+
+    health <- vaultHealth unauthConn
     _VaultHealth_Initialized health @?= False
 
-    (unsealKeys, rootToken) <- vaultInit addr 4 2
+    (unsealKeys, rootToken) <- vaultInit unauthConn 4 2
 
     length unsealKeys @?= 4
 
-    status0 <- vaultSealStatus addr
+    status0 <- vaultSealStatus unauthConn
     status0 @?= VaultSealStatus
         { _VaultSealStatus_Sealed = True
         , _VaultSealStatus_T = 2
@@ -62,7 +66,7 @@ talkToVault addr = do
         , _VaultSealStatus_Progress = 0
         }
 
-    status1 <- vaultUnseal addr (VaultUnseal_Key (unsealKeys !! 0))
+    status1 <- vaultUnseal unauthConn (VaultUnseal_Key (unsealKeys !! 0))
     status1 @?= VaultSealStatus
         { _VaultSealStatus_Sealed = True
         , _VaultSealStatus_T = 2
@@ -70,7 +74,7 @@ talkToVault addr = do
         , _VaultSealStatus_Progress = 1
         }
 
-    status2 <- vaultUnseal addr VaultUnseal_Reset
+    status2 <- vaultUnseal unauthConn VaultUnseal_Reset
     status2 @?= VaultSealStatus
         { _VaultSealStatus_Sealed = True
         , _VaultSealStatus_T = 2
@@ -78,7 +82,7 @@ talkToVault addr = do
         , _VaultSealStatus_Progress = 0
         }
 
-    status3 <- vaultUnseal addr (VaultUnseal_Key (unsealKeys !! 1))
+    status3 <- vaultUnseal unauthConn (VaultUnseal_Key (unsealKeys !! 1))
     status3 @?= VaultSealStatus
         { _VaultSealStatus_Sealed = True
         , _VaultSealStatus_T = 2
@@ -86,7 +90,7 @@ talkToVault addr = do
         , _VaultSealStatus_Progress = 1
         }
 
-    status4 <- vaultUnseal addr (VaultUnseal_Key (unsealKeys !! 2))
+    status4 <- vaultUnseal unauthConn (VaultUnseal_Key (unsealKeys !! 2))
     status4 @?= VaultSealStatus
         { _VaultSealStatus_Sealed = False
         , _VaultSealStatus_T = 2
@@ -94,26 +98,26 @@ talkToVault addr = do
         , _VaultSealStatus_Progress = 0
         }
 
-    conn <- connectToVault addr rootToken
+    let authConn = AuthenticatedVaultConnection manager addr rootToken
 
-    vaultNewMount conn "secret" VaultMount
+    vaultNewMount authConn "secret" VaultMount
         { _VaultMount_Type = "kv"
         , _VaultMount_Description = Just "key/value secret storage"
         , _VaultMount_Config = Nothing
         , _VaultMount_Options = Just VaultMountOptions { _VaultMountOptions_Version = Just 2 }
         }
 
-    allMounts <- vaultMounts conn
+    allMounts <- vaultMounts authConn
 
     fmap _VaultMount_Type (lookup "cubbyhole/" allMounts) @?= Just "cubbyhole"
     fmap _VaultMount_Type (lookup "secret/" allMounts) @?= Just "kv"
     fmap _VaultMount_Type (lookup "sys/" allMounts) @?= Just "system"
 
-    _ <- vaultMountTune conn "cubbyhole"
-    _ <- vaultMountTune conn "secret"
-    _ <- vaultMountTune conn "sys"
+    _ <- vaultMountTune authConn "cubbyhole"
+    _ <- vaultMountTune authConn "secret"
+    _ <- vaultMountTune authConn "sys"
 
-    vaultNewMount conn "mymount" VaultMount
+    vaultNewMount authConn "mymount" VaultMount
         { _VaultMount_Type = "generic"
         , _VaultMount_Description = Just "blah blah blah"
         , _VaultMount_Config = Just VaultMountConfig
@@ -123,57 +127,57 @@ talkToVault addr = do
         , _VaultMount_Options = Nothing
         }
 
-    mounts2 <- vaultMounts conn
+    mounts2 <- vaultMounts authConn
     fmap _VaultMount_Description (lookup "mymount/" mounts2) @?= Just "blah blah blah"
 
-    t <- vaultMountTune conn "mymount"
+    t <- vaultMountTune authConn "mymount"
     _VaultMountConfig_DefaultLeaseTtl t @?= 42
 
-    vaultMountSetTune conn "mymount" VaultMountConfig
+    vaultMountSetTune authConn "mymount" VaultMountConfig
         { _VaultMountConfig_DefaultLeaseTtl = Just 52
         , _VaultMountConfig_MaxLeaseTtl = Nothing
         }
 
-    t2 <- vaultMountTune conn "mymount"
+    t2 <- vaultMountTune authConn "mymount"
     _VaultMountConfig_DefaultLeaseTtl t2 @?= 52
 
-    vaultUnmount conn "mymount"
+    vaultUnmount authConn "mymount"
 
-    mounts3 <- vaultMounts conn
+    mounts3 <- vaultMounts authConn
     lookup "mymount/" mounts3 @?= Nothing
 
     let pathBig = mkVaultSecretPath "big"
-    vaultWrite conn pathBig (object ["A" .= 'a', "B" .= 'b'])
+    vaultWrite authConn pathBig (object ["A" .= 'a', "B" .= 'b'])
 
-    r <- vaultRead conn pathBig
+    r <- vaultRead authConn pathBig
     vsvData r @?= object ["A" .= 'a', "B" .= 'b']
 
     let pathFun = mkVaultSecretPath "fun"
-    vaultWrite conn pathFun (FunStuff "fun" [1, 2, 3])
-    r2 <- vaultRead conn pathFun
+    vaultWrite authConn pathFun (FunStuff "fun" [1, 2, 3])
+    r2 <- vaultRead authConn pathFun
     vsvData r2 @?= (FunStuff "fun" [1, 2, 3])
 
-    throws (vaultRead conn pathBig :: IO (VaultSecretVersion FunStuff)) >>= (@?= True)
+    throws (vaultRead authConn pathBig :: IO (VaultSecretVersion FunStuff)) >>= (@?= True)
 
     let pathFooBarA = mkVaultSecretPath "foo/bar/a"
         pathFooBarB = mkVaultSecretPath "foo/bar/b"
         pathFooBarABCDEFG = mkVaultSecretPath "foo/bar/a/b/c/d/e/f/g"
         pathFooQuackDuck = mkVaultSecretPath "foo/quack/duck"
 
-    vaultWrite conn pathFooBarA (object ["X" .= 'x'])
-    vaultWrite conn pathFooBarB (object ["X" .= 'x'])
-    vaultWrite conn pathFooBarABCDEFG (object ["X" .= 'x'])
-    vaultWrite conn pathFooQuackDuck (object ["X" .= 'x'])
+    vaultWrite authConn pathFooBarA (object ["X" .= 'x'])
+    vaultWrite authConn pathFooBarB (object ["X" .= 'x'])
+    vaultWrite authConn pathFooBarABCDEFG (object ["X" .= 'x'])
+    vaultWrite authConn pathFooQuackDuck (object ["X" .= 'x'])
 
     let emptySecretPath = mkVaultSecretPath ""
-    keys <- vaultList conn emptySecretPath
+    keys <- vaultList authConn emptySecretPath
     assertBool "Secret in list" $ pathBig `elem` keys
-    vaultDelete conn pathBig
+    vaultDelete authConn pathBig
 
-    keys2 <- vaultList conn emptySecretPath
+    keys2 <- vaultList authConn emptySecretPath
     assertBool "Secret not in list" $ not (pathBig `elem` keys2)
 
-    keys3 <- vaultListRecursive conn (mkVaultSecretPath "foo")
+    keys3 <- vaultListRecursive authConn (mkVaultSecretPath "foo")
     sort keys3 @?= sort
         [ pathFooBarA
         , pathFooBarB
@@ -181,24 +185,24 @@ talkToVault addr = do
         , pathFooQuackDuck
         ]
 
-    vaultAuthEnable conn "approle"
+    vaultAuthEnable authConn "approle"
 
     let pathSmall = mkVaultSecretPath "small"
-    vaultWrite conn pathSmall (object ["X" .= 'x'])
+    vaultWrite authConn pathSmall (object ["X" .= 'x'])
 
-    vaultPolicyCreate conn "foo" "path \"secret/small\" { capabilities = [\"read\"] }"
+    vaultPolicyCreate authConn "foo" "path \"secret/small\" { capabilities = [\"read\"] }"
 
-    vaultAppRoleCreate conn "foo-role" defaultVaultAppRoleParameters{_VaultAppRoleParameters_Policies = ["foo"]}
+    vaultAppRoleCreate authConn "foo-role" defaultVaultAppRoleParameters{_VaultAppRoleParameters_Policies = ["foo"]}
 
-    roleId <- vaultAppRoleRoleIdRead conn "foo-role"
-    secretId <- _VaultAppRoleSecretIdGenerateResponse_SecretId <$> vaultAppRoleSecretIdGenerate conn "foo-role" ""
+    roleId <- vaultAppRoleRoleIdRead authConn "foo-role"
+    secretId <- _VaultAppRoleSecretIdGenerateResponse_SecretId <$> vaultAppRoleSecretIdGenerate authConn "foo-role" ""
 
-    arConn <- connectToVaultAppRole addr roleId secretId
+    arConn <- connectToVaultAppRole manager addr roleId secretId
     throws (vaultRead arConn pathSmall :: IO (VaultSecretVersion FunStuff)) >>= (@?= True)
 
-    vaultSeal conn
+    vaultSeal authConn
 
-    status5 <- vaultSealStatus addr
+    status5 <- vaultSealStatus unauthConn
     status5 @?= VaultSealStatus
         { _VaultSealStatus_Sealed = True
         , _VaultSealStatus_T = 2
@@ -206,7 +210,7 @@ talkToVault addr = do
         , _VaultSealStatus_Progress = 0
         }
 
-    health2 <- vaultHealth addr
+    health2 <- vaultHealth unauthConn
     _VaultHealth_Initialized health2 @?= True
     _VaultHealth_Sealed health2 @?= True
 

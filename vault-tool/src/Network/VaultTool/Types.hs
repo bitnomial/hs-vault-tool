@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Network.VaultTool.Types (
@@ -6,17 +7,14 @@ module Network.VaultTool.Types (
     VaultAppRoleSecretId (..),
     VaultAppRoleSecretIdAccessor (..),
     VaultAuthToken (..),
-    VaultConnection,
+    VaultConnection (..),
+    Authenticated,
+    Unauthenticated,
     VaultException (..),
     VaultMountedPath (..),
     VaultSearchPath (..),
     VaultSecretPath (..),
     VaultUnsealKey (..),
-    mkAuthenticatedVaultConnection,
-    mkUnauthenticatedVaultConnection,
-    vaultAddress,
-    vaultAuthToken,
-    vaultConnectionManager,
 ) where
 
 import Control.Exception (Exception)
@@ -26,27 +24,13 @@ import Data.Text (Text)
 import qualified Data.ByteString.Lazy as BL
 import Network.HTTP.Client (Manager)
 
-data VaultConnection
-    = AuthenticatedVaultConnection VaultAddress Manager VaultAuthToken
-    | UnauthenticatedVaultConnection VaultAddress Manager
+data VaultConnection a where
+    UnauthenticatedVaultConnection :: Manager -> VaultAddress -> VaultConnection Unauthenticated
+    AuthenticatedVaultConnection :: Manager -> VaultAddress -> VaultAuthToken -> VaultConnection Authenticated
 
-mkAuthenticatedVaultConnection :: VaultAddress -> Manager -> VaultAuthToken -> VaultConnection
-mkAuthenticatedVaultConnection = AuthenticatedVaultConnection
+data Unauthenticated
 
-mkUnauthenticatedVaultConnection :: VaultAddress -> Manager -> VaultConnection
-mkUnauthenticatedVaultConnection = UnauthenticatedVaultConnection
-
-vaultAddress :: VaultConnection -> VaultAddress
-vaultAddress (AuthenticatedVaultConnection addr _ _) = addr
-vaultAddress (UnauthenticatedVaultConnection addr _) = addr
-
-vaultConnectionManager :: VaultConnection -> Manager
-vaultConnectionManager (AuthenticatedVaultConnection _ mgr _) = mgr
-vaultConnectionManager (UnauthenticatedVaultConnection _ mgr) = mgr
-
-vaultAuthToken :: VaultConnection -> Maybe VaultAuthToken
-vaultAuthToken (AuthenticatedVaultConnection _ _ token) = Just token
-vaultAuthToken (UnauthenticatedVaultConnection _ _) = Nothing
+data Authenticated
 
 newtype VaultAddress = VaultAddress { unVaultAddress :: Text }
     deriving (Show, Eq, Ord)

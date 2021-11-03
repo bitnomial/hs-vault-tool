@@ -220,7 +220,8 @@ shutdownVaultServerProcess vs = do
 
 vaultIsRunning :: VaultAddress -> IO Bool
 vaultIsRunning addr = do
-    (vaultHealth addr >> pure True) `catches`
+    conn <- flip UnauthenticatedVaultConnection addr <$> defaultManager
+    (vaultHealth conn >> pure True) `catches`
         [ Handler $ \(_ :: HttpException) -> pure False
         , Handler $ \(_ :: VaultException) -> pure False
         ]

@@ -13,10 +13,10 @@ module Network.VaultTool
     , VaultAppRoleSecretId(..)
     , VaultException(..)
 
+    , defaultManager
+
     , VaultHealth(..)
     , vaultHealth
-
-    , connectToVault
 
     , connectToVaultAppRole
 
@@ -52,6 +52,7 @@ module Network.VaultTool
     , vaultNewMount
     , vaultUnmount
 
+    , VaultConnection (..)
     , VaultMountedPath(..)
     , VaultSearchPath(..)
     , VaultSecretPath(..)
@@ -93,30 +94,21 @@ instance FromJSON VaultHealth where
              v .: "standby"
 
 -- | https://www.vaultproject.io/docs/http/sys-health.html
-vaultHealth :: VaultAddress -> IO VaultHealth
-vaultHealth addr = do
-    manager <- newManager tlsManagerSettings
-    runVaultRequest (mkUnauthenticatedVaultConnection addr manager)
-        . withStatusCodes expectedStatusCodes
+vaultHealth :: VaultConnection a -> IO VaultHealth
+vaultHealth conn = do
+    runVaultRequestUnauthenticated conn
+        . withStatusCodes [200, 429, 501, 503]
         $ newGetRequest "/sys/health"
-  where
-    expectedStatusCodes = [200, 429, 501, 503]
 
--- | Just initializes the 'VaultConnection' objects, does not actually make any
--- contact with the vault server. (That is also the explanation why there is no
--- function to disconnect)
-connectToVault :: VaultAddress -> VaultAuthToken -> IO VaultConnection
-connectToVault addr authToken = do
-    manager <- newManager tlsManagerSettings
-    pure $ mkAuthenticatedVaultConnection addr manager authToken
+defaultManager :: IO Manager
+defaultManager = newManager tlsManagerSettings
 
 -- | Initializes the 'VaultConnection' objects using approle credentials to retrieve an authtoken,
 -- and then calls `connectToVault`
-connectToVaultAppRole :: VaultAddress -> VaultAppRoleId -> VaultAppRoleSecretId -> IO VaultConnection
-connectToVaultAppRole addr roleId secretId = do
-    manager <- newManager tlsManagerSettings
-    authToken <- vaultAppRoleLogin addr manager roleId secretId
-    connectToVault addr authToken
+connectToVaultAppRole :: Manager -> VaultAddress -> VaultAppRoleId -> VaultAppRoleSecretId -> IO (VaultConnection Authenticated)
+connectToVaultAppRole manager addr roleId secretId =
+    AuthenticatedVaultConnection manager addr <$>
+        vaultAppRoleLogin (UnauthenticatedVaultConnection manager addr) roleId secretId
 
 -- | <https://www.vaultproject.io/docs/http/sys-init.html>
 --
@@ -135,20 +127,19 @@ instance FromJSON VaultInitResponse where
 
 -- | <https://www.vaultproject.io/docs/http/sys-init.html>
 vaultInit
-    :: VaultAddress
+    :: VaultConnection a
     -> Int -- ^ @secret_shares@: The number of shares to split the master key
            -- into
     -> Int -- ^ @secret_threshold@: The number of shares required to
            -- reconstruct the master key. This must be less than or equal to
            -- secret_shares
     -> IO ([VaultUnsealKey], VaultAuthToken) -- ^ master keys and initial root token
-vaultInit addr secretShares secretThreshold = do
+vaultInit conn secretShares secretThreshold = do
     let reqBody = object
             [ "secret_shares" .= secretShares
             , "secret_threshold" .= secretThreshold
             ]
-    manager <- newManager tlsManagerSettings
-    rsp <- runVaultRequest (mkUnauthenticatedVaultConnection addr manager) $
+    rsp <- runVaultRequestUnauthenticated conn $
         newPutRequest "/sys/init" (Just reqBody)
     let VaultInitResponse{_VaultInitResponse_Keys, _VaultInitResponse_RootToken} = rsp
     pure (map VaultUnsealKey _VaultInitResponse_Keys, _VaultInitResponse_RootToken)
@@ -172,10 +163,8 @@ instance FromJSON VaultSealStatus where
              v .: "n" <*>
              v .: "progress"
 
-vaultSealStatus :: VaultAddress -> IO VaultSealStatus
-vaultSealStatus addr = do
-    manager <- newManager tlsManagerSettings
-    runVaultRequest (mkUnauthenticatedVaultConnection addr manager) (newGetRequest "/sys/seal-status")
+vaultSealStatus :: VaultConnection a -> IO VaultSealStatus
+vaultSealStatus conn = runVaultRequestUnauthenticated conn (newGetRequest "/sys/seal-status")
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html>
 --
@@ -222,11 +211,11 @@ instance FromJSON VaultAppRoleResponse where
             v .: "lease_id"
 
 -- | <https://www.vaultproject.io/docs/auth/approle.html>
-vaultAppRoleLogin :: VaultAddress -> Manager -> VaultAppRoleId -> VaultAppRoleSecretId -> IO VaultAuthToken
-vaultAppRoleLogin addr manager roleId secretId = do
+vaultAppRoleLogin :: VaultConnection a -> VaultAppRoleId -> VaultAppRoleSecretId -> IO VaultAuthToken
+vaultAppRoleLogin conn roleId secretId = do
     response <-
-        runVaultRequest
-            (mkUnauthenticatedVaultConnection addr manager)
+        runVaultRequestUnauthenticated
+            conn
             (newPostRequest "/auth/approle/login" $ Just reqBody)
     maybe failOnNullAuth (return . _VaultAuth_ClientToken) $ _VaultAppRoleResponse_Auth response
   where
@@ -237,18 +226,18 @@ vaultAppRoleLogin addr manager roleId secretId = do
   failOnNullAuth = fail "Auth on login is null"
 
 -- | <https://www.vaultproject.io/docs/auth/approle.html#via-the-api-1>
-vaultAuthEnable :: VaultConnection -> Text -> IO ()
+vaultAuthEnable :: VaultConnection Authenticated-> Text -> IO ()
 vaultAuthEnable conn authMethod =
-    runVaultRequest_ conn
+    runVaultRequestAuthenticated_ conn
         . withStatusCodes [200, 204]
         $ newPostRequest ("/sys/auth/" <> authMethod) (Just reqBody)
   where
   reqBody = object [ "type" .= authMethod ]
 
 -- | <https://www.vaultproject.io/api/system/policies.html#create-update-acl-policy>
-vaultPolicyCreate :: VaultConnection -> Text -> Text -> IO ()
+vaultPolicyCreate :: VaultConnection Authenticated -> Text -> Text -> IO ()
 vaultPolicyCreate conn policyName policy =
-    runVaultRequest_ conn
+    runVaultRequestAuthenticated_ conn
         . withStatusCodes [200, 204]
         $ newPutRequest
             ("/sys/policies/acl/" <> policyName)
@@ -310,16 +299,16 @@ defaultVaultAppRoleParameters :: VaultAppRoleParameters
 defaultVaultAppRoleParameters = VaultAppRoleParameters True [] Nothing Nothing Nothing Nothing Nothing Nothing
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#create-new-approle>
-vaultAppRoleCreate :: VaultConnection -> Text -> VaultAppRoleParameters -> IO ()
+vaultAppRoleCreate :: VaultConnection Authenticated -> Text -> VaultAppRoleParameters -> IO ()
 vaultAppRoleCreate conn appRoleName varp =
-    runVaultRequest_ conn
+    runVaultRequestAuthenticated_ conn
     . withStatusCodes [200, 204]
     $ newPostRequest ("/auth/approle/role/" <> appRoleName) (Just varp)
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#read-approle-role-id>
-vaultAppRoleRoleIdRead :: VaultConnection -> Text -> IO VaultAppRoleId
+vaultAppRoleRoleIdRead :: VaultConnection Authenticated -> Text -> IO VaultAppRoleId
 vaultAppRoleRoleIdRead conn appRoleName = do
-    response <- runVaultRequest conn $ newGetRequest ("/auth/approle/role/" <> appRoleName <> "/role-id")
+    response <- runVaultRequestAuthenticated conn $ newGetRequest ("/auth/approle/role/" <> appRoleName <> "/role-id")
     let d = _VaultAppRoleResponse_Data response
     case parseEither parseJSON d of
       Left err -> throwIO $ VaultException_ParseBodyError "GET" ("/auth/approle/role/" <> appRoleName <> "/role-id") (encode d) (T.pack err)
@@ -337,9 +326,9 @@ instance FromJSON VaultAppRoleSecretIdGenerateResponse where
             v .: "secret_id"
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#generate-new-secret-id>
-vaultAppRoleSecretIdGenerate :: VaultConnection -> Text -> Text -> IO VaultAppRoleSecretIdGenerateResponse
+vaultAppRoleSecretIdGenerate :: VaultConnection Authenticated -> Text -> Text -> IO VaultAppRoleSecretIdGenerateResponse
 vaultAppRoleSecretIdGenerate conn appRoleName metadata = do
-    response <- runVaultRequest conn $ newPostRequest ("/auth/approle/role/" <> appRoleName <> "/secret-id") (Just reqBody)
+    response <- runVaultRequestAuthenticated conn $ newPostRequest ("/auth/approle/role/" <> appRoleName <> "/secret-id") (Just reqBody)
     let d = _VaultAppRoleResponse_Data response
     case parseEither parseJSON d of
       Left err -> throwIO $ VaultException_ParseBodyError "POST" ("/auth/approle/role/" <> appRoleName <> "/secret-id") (encode d) (T.pack err)
@@ -347,9 +336,9 @@ vaultAppRoleSecretIdGenerate conn appRoleName metadata = do
     where
     reqBody = object[ "metadata" .= metadata ]
 
-vaultSeal :: VaultConnection -> IO ()
+vaultSeal :: VaultConnection Authenticated -> IO ()
 vaultSeal conn =
-    runVaultRequest_ conn
+    runVaultRequestAuthenticated_ conn
         . withStatusCodes [200, 204]
         $ newPutRequest "/sys/seal" (Nothing :: Maybe ())
 
@@ -362,8 +351,8 @@ data VaultUnseal
     deriving (Show, Eq, Ord)
 
 -- | <https://www.vaultproject.io/docs/http/sys-unseal.html>
-vaultUnseal :: VaultAddress -> VaultUnseal -> IO VaultSealStatus
-vaultUnseal addr unseal = do
+vaultUnseal :: VaultConnection a -> VaultUnseal -> IO VaultSealStatus
+vaultUnseal conn unseal = do
     let reqBody = case unseal of
             VaultUnseal_Key (VaultUnsealKey key) -> object
                 [ "key" .= key
@@ -371,9 +360,7 @@ vaultUnseal addr unseal = do
             VaultUnseal_Reset -> object
                 [ "reset" .= True
                 ]
-    manager <- newManager tlsManagerSettings
-    runVaultRequest (mkUnauthenticatedVaultConnection addr manager) $
-        newPutRequest "/sys/unseal" (Just reqBody)
+    runVaultRequestUnauthenticated conn $ newPutRequest "/sys/unseal" (Just reqBody)
 
 type VaultMountRead = VaultMount Text VaultMountConfigRead (Maybe VaultMountConfigOptions)
 type VaultMountWrite = VaultMount (Maybe Text) (Maybe VaultMountConfigWrite) (Maybe VaultMountConfigOptions)
@@ -446,10 +433,10 @@ instance ToJSON VaultMountConfigOptions where
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
 --
 -- For your convenience, the results are returned sorted (by the mount point)
-vaultMounts :: VaultConnection -> IO [(Text, VaultMountRead)]
+vaultMounts :: VaultConnection Authenticated -> IO [(Text, VaultMountRead)]
 vaultMounts conn = do
     let reqPath = "/sys/mounts"
-    rspObj <- runVaultRequest conn $ newGetRequest reqPath
+    rspObj <- runVaultRequestAuthenticated conn $ newGetRequest reqPath
 
     -- Vault 0.6.1 has a different format than previous versions.
     -- See <https://github.com/hashicorp/vault/issues/1965>
@@ -464,30 +451,30 @@ vaultMounts conn = do
         Right obj -> pure $ sortOn fst (H.toList obj)
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
-vaultMountTune :: VaultConnection -> Text -> IO VaultMountConfigRead
+vaultMountTune :: VaultConnection Authenticated -> Text -> IO VaultMountConfigRead
 vaultMountTune conn mountPoint =
-    runVaultRequest conn
+    runVaultRequestAuthenticated conn
         . newGetRequest
         $ "/sys/mounts/" <> mountPoint <> "/tune"
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
-vaultMountSetTune :: VaultConnection -> Text -> VaultMountConfigWrite -> IO ()
+vaultMountSetTune :: VaultConnection Authenticated -> Text -> VaultMountConfigWrite -> IO ()
 vaultMountSetTune conn mountPoint mountConfig =
-    runVaultRequest_ conn
+    runVaultRequestAuthenticated_ conn
         . withStatusCodes [200, 204]
         $ newPostRequest ("/sys/mounts/" <> mountPoint <> "/tune") (Just mountConfig)
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
-vaultNewMount :: VaultConnection -> Text -> VaultMountWrite -> IO ()
+vaultNewMount :: VaultConnection Authenticated -> Text -> VaultMountWrite -> IO ()
 vaultNewMount conn mountPoint vaultMount =
-    runVaultRequest_ conn
+    runVaultRequestAuthenticated_ conn
         . withStatusCodes [200, 204]
         $ newPostRequest ("/sys/mounts/" <> mountPoint) (Just vaultMount)
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
-vaultUnmount :: VaultConnection -> Text -> IO ()
+vaultUnmount :: VaultConnection Authenticated -> Text -> IO ()
 vaultUnmount conn mountPoint =
-    runVaultRequest_ conn
+    runVaultRequestAuthenticated_ conn
         . withStatusCodes [200, 204]
         . newDeleteRequest
         $ "/sys/mounts/" <> mountPoint
