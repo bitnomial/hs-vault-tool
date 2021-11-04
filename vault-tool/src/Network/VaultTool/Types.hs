@@ -7,13 +7,11 @@ module Network.VaultTool.Types (
     VaultAppRoleSecretId (..),
     VaultAppRoleSecretIdAccessor (..),
     VaultAuthToken (..),
-    VaultConnection,
+    VaultConnection (..),
     Authenticated,
     Unauthenticated,
     authenticatedVaultConnection,
     unauthenticatedVaultConnection,
-    runAnyVaultConnection,
-    runAuthenticatedVaultConnection,
     VaultException (..),
     VaultMountedPath (..),
     VaultSearchPath (..),
@@ -46,13 +44,6 @@ authenticatedVaultConnection = AuthenticatedVaultConnection
 
 unauthenticatedVaultConnection :: Manager -> VaultAddress -> VaultConnection Unauthenticated
 unauthenticatedVaultConnection = UnauthenticatedVaultConnection
-
-runAnyVaultConnection :: (Manager -> VaultAddress -> b) -> VaultConnection a -> b
-runAnyVaultConnection f (UnauthenticatedVaultConnection manager addr) = f manager addr
-runAnyVaultConnection f (AuthenticatedVaultConnection manager addr _) = f manager addr
-
-runAuthenticatedVaultConnection :: (Manager -> VaultAddress -> VaultAuthToken -> a) -> VaultConnection Authenticated -> a
-runAuthenticatedVaultConnection f (AuthenticatedVaultConnection manager addr token) = f manager addr token
 
 newtype VaultAddress = VaultAddress { unVaultAddress :: Text }
     deriving (Show, Eq, Ord)
