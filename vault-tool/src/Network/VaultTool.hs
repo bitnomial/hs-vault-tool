@@ -13,7 +13,12 @@ module Network.VaultTool
     , VaultAppRoleSecretId(..)
     , VaultException(..)
 
+    , VaultConnection
+    , Unauthenticated
+    , Authenticated
     , defaultManager
+    , authenticatedVaultConnection
+    , unauthenticatedVaultConnection
 
     , VaultHealth(..)
     , vaultHealth
@@ -52,7 +57,6 @@ module Network.VaultTool
     , vaultNewMount
     , vaultUnmount
 
-    , VaultConnection (..)
     , VaultMountedPath(..)
     , VaultSearchPath(..)
     , VaultSecretPath(..)
@@ -107,8 +111,8 @@ defaultManager = newManager tlsManagerSettings
 -- and then calls `connectToVault`
 connectToVaultAppRole :: Manager -> VaultAddress -> VaultAppRoleId -> VaultAppRoleSecretId -> IO (VaultConnection Authenticated)
 connectToVaultAppRole manager addr roleId secretId =
-    AuthenticatedVaultConnection manager addr <$>
-        vaultAppRoleLogin (UnauthenticatedVaultConnection manager addr) roleId secretId
+    authenticatedVaultConnection manager addr <$>
+        vaultAppRoleLogin (unauthenticatedVaultConnection manager addr) roleId secretId
 
 -- | <https://www.vaultproject.io/docs/http/sys-init.html>
 --

@@ -7,9 +7,13 @@ module Network.VaultTool.Types (
     VaultAppRoleSecretId (..),
     VaultAppRoleSecretIdAccessor (..),
     VaultAuthToken (..),
-    VaultConnection (..),
+    VaultConnection,
     Authenticated,
     Unauthenticated,
+    authenticatedVaultConnection,
+    unauthenticatedVaultConnection,
+    runAnyVaultConnection,
+    runAuthenticatedVaultConnection,
     VaultException (..),
     VaultMountedPath (..),
     VaultSearchPath (..),
@@ -24,13 +28,31 @@ import Data.Text (Text)
 import qualified Data.ByteString.Lazy as BL
 import Network.HTTP.Client (Manager)
 
+-- |The APIs exported by this library expect a 'VaultConnection' which is used to know where a vault server is and how
+-- to talk to it. The type parameter is used to distinguish between 'Unauthenticated' and 'Authenticated' requests. When
+-- a function takes a polymorphic connection (VaultConnection a), either type of connection can be used.
 data VaultConnection a where
     UnauthenticatedVaultConnection :: Manager -> VaultAddress -> VaultConnection Unauthenticated
     AuthenticatedVaultConnection :: Manager -> VaultAddress -> VaultAuthToken -> VaultConnection Authenticated
 
+-- |Used as a type argument when constructing a 'VaultConnection'. Designates an unauthenticated connection.
 data Unauthenticated
 
+-- |Used as a type argument when constructing a 'VaultConnection'. Designates an authenticated connection.
 data Authenticated
+
+authenticatedVaultConnection :: Manager -> VaultAddress -> VaultAuthToken -> VaultConnection Authenticated
+authenticatedVaultConnection = AuthenticatedVaultConnection
+
+unauthenticatedVaultConnection :: Manager -> VaultAddress -> VaultConnection Unauthenticated
+unauthenticatedVaultConnection = UnauthenticatedVaultConnection
+
+runAnyVaultConnection :: (Manager -> VaultAddress -> b) -> VaultConnection a -> b
+runAnyVaultConnection f (UnauthenticatedVaultConnection manager addr) = f manager addr
+runAnyVaultConnection f (AuthenticatedVaultConnection manager addr _) = f manager addr
+
+runAuthenticatedVaultConnection :: (Manager -> VaultAddress -> VaultAuthToken -> a) -> VaultConnection Authenticated -> a
+runAuthenticatedVaultConnection f (AuthenticatedVaultConnection manager addr token) = f manager addr token
 
 newtype VaultAddress = VaultAddress { unVaultAddress :: Text }
     deriving (Show, Eq, Ord)

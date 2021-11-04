@@ -16,7 +16,13 @@ import Test.Tasty.HUnit
 
 import Network.VaultTool
 import Network.VaultTool.KeyValueV2
-import Network.VaultTool.VaultServerProcess
+import Network.VaultTool.VaultServerProcess (
+    VaultBackendConfig,
+    vaultAddress,
+    vaultConfigDefaultAddress,
+    withVaultConfigFile,
+    withVaultServerProcess,
+ )
 
 withTempVaultBackend :: (VaultBackendConfig -> IO a) -> IO a
 withTempVaultBackend action = withSystemTempDirectory "hs_vault" $ \tmpDir -> do
@@ -49,7 +55,7 @@ talkToVault :: VaultAddress -> IO ()
 talkToVault addr = do
     manager <- defaultManager
 
-    let unauthConn = UnauthenticatedVaultConnection manager addr
+    let unauthConn = unauthenticatedVaultConnection manager addr
 
     health <- vaultHealth unauthConn
     _VaultHealth_Initialized health @?= False
@@ -98,7 +104,7 @@ talkToVault addr = do
         , _VaultSealStatus_Progress = 0
         }
 
-    let authConn = AuthenticatedVaultConnection manager addr rootToken
+    let authConn = authenticatedVaultConnection manager addr rootToken
 
     vaultNewMount authConn "secret" VaultMount
         { _VaultMount_Type = "kv"
