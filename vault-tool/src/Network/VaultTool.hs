@@ -62,7 +62,19 @@ module Network.VaultTool
     , VaultSecretPath(..)
     ) where
 import Control.Exception (throwIO)
-import Data.Aeson
+import Data.Aeson (
+    FromJSON,
+    ToJSON,
+    Value (..),
+    (.:),
+    (.=),
+    (.:?),
+    encode,
+    object,
+    toJSON,
+    parseJSON,
+    withObject,
+ )
 import Data.Aeson.Types (parseEither, Pair)
 import Data.List (sortOn)
 import Data.Text (Text)
@@ -73,8 +85,33 @@ import Network.HTTP.Client.TLS (tlsManagerSettings)
 import qualified Data.HashMap.Strict as H
 import Text.Read (readEither)
 
-import Network.VaultTool.Internal
-import Network.VaultTool.Types
+import Network.VaultTool.Internal (
+    newDeleteRequest,
+    newGetRequest,
+    newPostRequest,
+    newPutRequest,
+    runVaultRequestAuthenticated,
+    runVaultRequestAuthenticated_,
+    runVaultRequestUnauthenticated,
+    withStatusCodes,
+ )
+import Network.VaultTool.Types (
+    Authenticated,
+    Unauthenticated,
+    VaultAddress (..),
+    VaultAppRoleId (..),
+    VaultAppRoleSecretId (..),
+    VaultAppRoleSecretIdAccessor (..),
+    VaultAuthToken (..),
+    VaultConnection,
+    VaultException (..),
+    VaultMountedPath (..),
+    VaultSearchPath (..),
+    VaultSecretPath (..),
+    VaultUnsealKey (..),
+    authenticatedVaultConnection,
+    unauthenticatedVaultConnection,
+ )
 
 -- | <https://www.vaultproject.io/docs/http/sys-health.html>
 --
@@ -482,17 +519,3 @@ vaultUnmount conn mountPoint =
         . withStatusCodes [200, 204]
         . newDeleteRequest
         $ "/sys/mounts/" <> mountPoint
-
-data VaultSecretMetadata = VaultSecretMetadata
-    { _VaultSecretMetadata_leaseDuration :: Int
-    , _VaultSecretMetadata_leaseId :: Text
-    , _VauleSecretMetadata_renewable :: Bool
-    }
-    deriving (Show, Eq {- TODO Ord -})
-
-instance FromJSON VaultSecretMetadata where
-    parseJSON = withObject "VaultSecretMetadata" $ \v ->
-        VaultSecretMetadata <$>
-            v .: "lease_duration" <*>
-            v .: "lease_id" <*>
-            v .: "renewable"

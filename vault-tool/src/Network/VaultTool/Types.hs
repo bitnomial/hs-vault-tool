@@ -20,23 +20,23 @@ module Network.VaultTool.Types (
 ) where
 
 import Control.Exception (Exception)
-import Data.Aeson
+import Data.Aeson (FromJSON, ToJSON, (.:), (.=), object, parseJSON, toJSON, withObject)
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 import qualified Data.ByteString.Lazy as BL
 import Network.HTTP.Client (Manager)
 
--- |The APIs exported by this library expect a 'VaultConnection' which is used to know where a vault server is and how
+-- | The APIs exported by this library expect a 'VaultConnection' which is used to know where a vault server is and how
 -- to talk to it. The type parameter is used to distinguish between 'Unauthenticated' and 'Authenticated' requests. When
 -- a function takes a polymorphic connection (VaultConnection a), either type of connection can be used.
 data VaultConnection a where
     UnauthenticatedVaultConnection :: Manager -> VaultAddress -> VaultConnection Unauthenticated
     AuthenticatedVaultConnection :: Manager -> VaultAddress -> VaultAuthToken -> VaultConnection Authenticated
 
--- |Used as a type argument when constructing a 'VaultConnection'. Designates an unauthenticated connection.
+-- | Used as a type argument when constructing a 'VaultConnection'. Designates an unauthenticated connection.
 data Unauthenticated
 
--- |Used as a type argument when constructing a 'VaultConnection'. Designates an authenticated connection.
+-- | Used as a type argument when constructing a 'VaultConnection'. Designates an authenticated connection.
 data Authenticated
 
 authenticatedVaultConnection :: Manager -> VaultAddress -> VaultAuthToken -> VaultConnection Authenticated

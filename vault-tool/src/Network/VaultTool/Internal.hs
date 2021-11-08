@@ -18,17 +18,34 @@ module Network.VaultTool.Internal (
 
 import Control.Exception (throwIO)
 import Control.Monad (unless, void)
-import Data.Aeson
+import Data.Aeson (FromJSON, ToJSON, eitherDecode', encode)
 import qualified Data.ByteString.Lazy as BL
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Network.HTTP.Client
-import Network.HTTP.Types.Header
-import Network.HTTP.Types.Method
-import Network.HTTP.Types.Status
+import Network.HTTP.Client (
+    Manager,
+    RequestBody (..),
+    httpLbs,
+    method,
+    parseRequest,
+    requestBody,
+    requestHeaders,
+    responseBody,
+    responseStatus,
+ )
+import Network.HTTP.Types.Header (RequestHeaders)
+import Network.HTTP.Types.Method (Method)
+import Network.HTTP.Types.Status (statusCode)
 
-import Network.VaultTool.Types
+import Network.VaultTool.Types (
+    Authenticated,
+    Unauthenticated,
+    VaultAddress (..),
+    VaultAuthToken (..),
+    VaultConnection (..),
+    VaultException (..),
+ )
 
 data VaultRequest a = VaultRequest
     { vrMethod :: Method

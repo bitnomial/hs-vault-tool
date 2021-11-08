@@ -5,17 +5,58 @@
 module Main where
 
 import Control.Exception (catch)
-import Data.Aeson
+import Data.Aeson (FromJSON, ToJSON, (.=), object)
 import Data.Functor (($>))
 import Data.List (sort)
 import Data.Text (Text)
-import GHC.Generics
-import System.Environment
+import GHC.Generics (Generic)
+import System.Environment (lookupEnv)
 import System.IO.Temp (withSystemTempDirectory)
-import Test.Tasty.HUnit
+import Test.Tasty.HUnit ((@?=), assertBool)
 
-import Network.VaultTool
-import Network.VaultTool.KeyValueV2
+import Network.VaultTool (
+    VaultAddress,
+    VaultAppRoleParameters (..),
+    VaultAppRoleSecretIdGenerateResponse (..),
+    VaultException,
+    VaultHealth (..),
+    VaultMount (..),
+    VaultMountConfig (..),
+    VaultMountOptions (..),
+    VaultMountedPath (..),
+    VaultSealStatus (..),
+    VaultSearchPath (..),
+    VaultSecretPath (..),
+    VaultUnseal (..),
+    authenticatedVaultConnection,
+    connectToVaultAppRole,
+    defaultManager,
+    defaultVaultAppRoleParameters,
+    unauthenticatedVaultConnection,
+    vaultAppRoleCreate,
+    vaultAppRoleRoleIdRead,
+    vaultAppRoleSecretIdGenerate,
+    vaultAuthEnable,
+    vaultHealth,
+    vaultInit,
+    vaultMountSetTune,
+    vaultMountTune,
+    vaultMounts,
+    vaultNewMount,
+    vaultPolicyCreate,
+    vaultSeal,
+    vaultSealStatus,
+    vaultUnmount,
+    vaultUnseal,
+ )
+import Network.VaultTool.KeyValueV2 (
+    VaultSecretVersion (..),
+    vaultDelete,
+    vaultRead,
+    vaultWrite,
+    vaultList,
+    vaultListRecursive,
+ )
 import Network.VaultTool.VaultServerProcess (
     VaultBackendConfig,
     vaultAddress,
@@ -219,6 +260,8 @@ talkToVault addr = do
     health2 <- vaultHealth unauthConn
     _VaultHealth_Initialized health2 @?= True
     _VaultHealth_Sealed health2 @?= True
+
+    -- TODO add test for vaultReadVersion
 
 data FunStuff = FunStuff
     { funString :: String

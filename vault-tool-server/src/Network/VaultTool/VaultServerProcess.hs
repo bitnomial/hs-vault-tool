@@ -19,23 +19,43 @@ module Network.VaultTool.VaultServerProcess
     ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async
+import Control.Concurrent.Async (waitAnyCancel, withAsync)
 import Control.Exception (Exception, IOException, catches, Handler(Handler), bracket, bracketOnError, throwIO, try)
 import Control.Monad (forever)
-import Data.Aeson
+import Data.Aeson (ToJSON, Value, (.=), eitherDecode', encode, object, toJSON)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Network.HTTP.Client (HttpException)
 import System.Exit (ExitCode)
 import System.FilePath ((</>))
 import System.IO (Handle, hClose)
-import System.IO.Temp
-import System.Process
+import System.IO.Temp (withSystemTempDirectory)
+import System.Process (
+    ProcessHandle,
+    StdStream (..),
+    close_fds,
+    createProcess,
+    env,
+    getProcessExitCode,
+    proc,
+    std_err,
+    std_in,
+    std_out,
+    terminateProcess,
+    waitForProcess,
+ )
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
-import Network.VaultTool
+import Network.VaultTool (
+    VaultAddress (..),
+    VaultException,
+    VaultUnsealKey (..),
+    unauthenticatedVaultConnection,
+    vaultHealth,
+    defaultManager,
+ )
 
 -- | The ""backend"" section of the Vault server configuration.
 --
@@ -221,7 +241,7 @@ shutdownVaultServerProcess vs = do
 vaultIsRunning :: VaultAddress -> IO Bool
 vaultIsRunning addr = do
     conn <- flip unauthenticatedVaultConnection addr <$> defaultManager
-    (vaultHealth conn >> pure True) `catches`
+    (True <$ vaultHealth conn) `catches`
         [ Handler $ \(_ :: HttpException) -> pure False
         , Handler $ \(_ :: VaultException) -> pure False
         ]

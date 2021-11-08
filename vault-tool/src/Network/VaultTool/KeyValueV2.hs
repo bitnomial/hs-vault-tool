@@ -9,7 +9,6 @@
 module Network.VaultTool.KeyValueV2 (
     VaultSecretVersion (..),
     VaultSecretVersionMetadata (..),
-    VaultSecretMetadata (..),
     vaultWrite,
     vaultRead,
     vaultReadVersion,
@@ -19,7 +18,7 @@ module Network.VaultTool.KeyValueV2 (
     vaultListRecursive,
 ) where
 
-import Control.Applicative ((<|>))
+import Control.Applicative (optional)
 import Data.Aeson (
     FromJSON,
     ToJSON,
@@ -51,20 +50,8 @@ import Network.VaultTool.Types (
     VaultSecretPath (..),
  )
 
-data VaultSecretMetadata = VaultSecretMetadata
-    { _VaultSecretMetadata_leaseDuration :: Int
-    , _VaultSecretMetadata_leaseId :: Text
-    , _VauleSecretMetadata_renewable :: Bool
-    }
-    deriving (Show, Eq {- TODO Ord -})
-
-instance FromJSON VaultSecretMetadata where
-    parseJSON = withObject "VaultSecretMetadata" $ \v ->
-        VaultSecretMetadata
-            <$> v .: "lease_duration"
-            <*> v .: "lease_id"
-            <*> v .: "renewable"
-
+{- | <https://www.vaultproject.io/api-docs/secret/kv/kv-v2#sample-response-1>
+-}
 data VaultSecretVersion a = VaultSecretVersion
     { vsvData :: a
     , vsvMetadata :: VaultSecretVersionMetadata
@@ -77,6 +64,8 @@ instance FromJSON a => FromJSON (VaultSecretVersion a) where
             <$> v .: "data"
             <*> v .: "metadata"
 
+{- | <https://www.vaultproject.io/api-docs/secret/kv/kv-v2#sample-response-1>
+-}
 data VaultSecretVersionMetadata = VaultSecretVersionMetadata
     { vsvmCreatedTime :: UTCTime
     , vsvmDeletionTime :: Maybe UTCTime
@@ -89,11 +78,9 @@ instance FromJSON VaultSecretVersionMetadata where
     parseJSON = withObject "VaultSecretVersionMetadata" $ \v ->
         VaultSecretVersionMetadata
             <$> v .: "created_time"
-            <*> (v .: "deletion_time" >>= parseOptionalDate)
+            <*> optional (v .: "deletion_time")
             <*> v .: "destroyed"
             <*> v .: "version"
-      where
-        parseOptionalDate x = parseJSON x <|> pure Nothing
 
 vaultRead ::
     FromJSON a =>
@@ -125,8 +112,6 @@ instance FromJSON a => FromJSON (DataWrapper a) where
     parseJSON = withObject "DataWrapper" $ fmap DataWrapper . (.: "data")
 
 {- | <https://www.vaultproject.io/docs/secrets/generic/index.html>
-
- The value that you give must encode as a JSON object
 -}
 vaultWrite :: ToJSON a => VaultConnection Authenticated -> VaultSecretPath -> a -> IO ()
 vaultWrite conn (VaultSecretPath (mountedPath, searchPath)) = do
@@ -181,12 +166,12 @@ vaultList conn (VaultSecretPath (VaultMountedPath mountedPath, VaultSearchPath s
 vaultListRecursive :: VaultConnection Authenticated -> VaultSecretPath -> IO [VaultSecretPath]
 vaultListRecursive conn location = do
     paths <- vaultList conn location
-    flip concatMapM paths $ \path -> do
+    flip concatMapA paths $ \path -> do
         if isFolder path
             then vaultListRecursive conn path
             else pure [path]
   where
-    concatMapM f xs = fmap concat (mapM f xs)
+    concatMapA f = fmap concat . traverse f
 
 {- | Does the path end with a '/' character?
 
