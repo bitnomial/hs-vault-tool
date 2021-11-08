@@ -53,6 +53,7 @@ import Network.VaultTool.KeyValueV2 (
     VaultSecretVersion (..),
     vaultDelete,
     vaultRead,
+    vaultReadVersion,
     vaultWrite,
     vaultList,
     vaultListRecursive,
@@ -232,6 +233,14 @@ talkToVault addr = do
         , pathFooQuackDuck
         ]
 
+    let pathReadVersionTest = mkVaultSecretPath "read/version/secret"
+    vaultWrite authConn pathReadVersionTest (FunStuff "x" [1])
+    vaultWrite authConn pathReadVersionTest (FunStuff "y" [2, 3])
+    v1Resp <- vaultReadVersion authConn pathReadVersionTest (Just 1)
+    vsvData v1Resp @?= (FunStuff "x" [1])
+    v2Resp <- vaultReadVersion authConn pathReadVersionTest Nothing
+    vsvData v2Resp @?= (FunStuff "y" [2, 3])
+
     vaultAuthEnable authConn "approle"
 
     let pathSmall = mkVaultSecretPath "small"
@@ -260,8 +269,6 @@ talkToVault addr = do
     health2 <- vaultHealth unauthConn
     _VaultHealth_Initialized health2 @?= True
     _VaultHealth_Sealed health2 @?= True
-
-    -- TODO add test for vaultReadVersion
 
 data FunStuff = FunStuff
     { funString :: String
