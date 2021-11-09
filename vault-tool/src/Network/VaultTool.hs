@@ -13,11 +13,15 @@ module Network.VaultTool
     , VaultAppRoleSecretId(..)
     , VaultException(..)
 
+    , VaultConnection
+    , Unauthenticated
+    , Authenticated
+    , defaultManager
+    , authenticatedVaultConnection
+    , unauthenticatedVaultConnection
+
     , VaultHealth(..)
     , vaultHealth
-
-    , VaultConnection
-    , connectToVault
 
     , connectToVaultAppRole
 
@@ -45,45 +49,69 @@ module Network.VaultTool
     , VaultMountConfig(..)
     , VaultMountConfigRead
     , VaultMountConfigWrite
+    , VaultMountOptions(..)
+    , VaultMountConfigOptions
     , vaultMounts
     , vaultMountTune
     , vaultMountSetTune
     , vaultNewMount
     , vaultUnmount
 
+    , VaultMountedPath(..)
+    , VaultSearchPath(..)
     , VaultSecretPath(..)
-    , VaultSecretMetadata(..)
-    , vaultWrite
-    , vaultRead
-    , vaultDelete
-    , vaultList
-    , isFolder
-    , vaultListRecursive
     ) where
-
-import Data.Monoid ((<>))
 import Control.Exception (throwIO)
-import Control.Monad (liftM)
-import Data.Aeson
+import Data.Aeson (
+    FromJSON,
+    ToJSON,
+    Value (..),
+    (.:),
+    (.=),
+    (.:?),
+    encode,
+    object,
+    toJSON,
+    parseJSON,
+    withObject,
+ )
 import Data.Aeson.Types (parseEither, Pair)
 import Data.List (sortOn)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Maybe (catMaybes)
 import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
-import Network.HTTP.Types.Header (Header)
 import qualified Data.HashMap.Strict as H
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
+import Text.Read (readEither)
 
-import Network.VaultTool.Internal
-import Network.VaultTool.Types
-
-data VaultConnection = VaultConnection
-    { _VaultConnection_AuthToken :: VaultAuthToken
-    , _VaultConnection_VaultAddress :: VaultAddress
-    , _VaultConnection_Manager :: Manager
-    }
+import Network.VaultTool.Internal (
+    newDeleteRequest,
+    newGetRequest,
+    newPostRequest,
+    newPutRequest,
+    runVaultRequestAuthenticated,
+    runVaultRequestAuthenticated_,
+    runVaultRequestUnauthenticated,
+    withStatusCodes,
+ )
+import Network.VaultTool.Types (
+    Authenticated,
+    Unauthenticated,
+    VaultAddress (..),
+    VaultAppRoleId (..),
+    VaultAppRoleSecretId (..),
+    VaultAppRoleSecretIdAccessor (..),
+    VaultAuthToken (..),
+    VaultConnection,
+    VaultException (..),
+    VaultMountedPath (..),
+    VaultSearchPath (..),
+    VaultSecretPath (..),
+    VaultUnsealKey (..),
+    authenticatedVaultConnection,
+    unauthenticatedVaultConnection,
+ )
 
 -- | <https://www.vaultproject.io/docs/http/sys-health.html>
 --
@@ -98,45 +126,30 @@ data VaultHealth = VaultHealth
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultHealth where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultHealth" $ \v ->
         VaultHealth <$>
              v .: "version" <*>
              v .: "server_time_utc" <*>
              v .: "initialized" <*>
              v .: "sealed" <*>
              v .: "standby"
-    parseJSON _ = fail "Not an Object"
-
-vaultUrl :: VaultAddress -> String -> String
-vaultUrl (VaultAddress addr) path = T.unpack addr ++ "/v1" ++ path
 
 -- | https://www.vaultproject.io/docs/http/sys-health.html
-vaultHealth :: VaultAddress -> IO VaultHealth
-vaultHealth vaultAddress = do
-    manager <- newManager tlsManagerSettings
-    vaultRequestJSON manager "GET" (vaultUrl vaultAddress "/sys/health") [] (Nothing :: Maybe ()) expectedStatusCodes
-    where
-    expectedStatusCodes = [200, 429, 501, 503]
+vaultHealth :: VaultConnection a -> IO VaultHealth
+vaultHealth conn = do
+    runVaultRequestUnauthenticated conn
+        . withStatusCodes [200, 429, 501, 503]
+        $ newGetRequest "/sys/health"
 
--- | Just initializes the 'VaultConnection' objects, does not actually make any
--- contact with the vault server. (That is also the explanation why there is no
--- function to disconnect)
-connectToVault :: VaultAddress -> VaultAuthToken -> IO VaultConnection
-connectToVault addr authToken = do
-    manager <- newManager tlsManagerSettings
-    pure VaultConnection
-            { _VaultConnection_AuthToken = authToken
-            , _VaultConnection_VaultAddress = addr
-            , _VaultConnection_Manager = manager
-            }
+defaultManager :: IO Manager
+defaultManager = newManager tlsManagerSettings
 
 -- | Initializes the 'VaultConnection' objects using approle credentials to retrieve an authtoken,
 -- and then calls `connectToVault`
-connectToVaultAppRole :: VaultAddress -> VaultAppRoleId -> VaultAppRoleSecretId -> IO VaultConnection
-connectToVaultAppRole addr roleId secretId = do
-    manager <- newManager tlsManagerSettings
-    authToken <- vaultAppRoleLogin addr manager roleId secretId
-    connectToVault addr authToken
+connectToVaultAppRole :: Manager -> VaultAddress -> VaultAppRoleId -> VaultAppRoleSecretId -> IO (VaultConnection Authenticated)
+connectToVaultAppRole manager addr roleId secretId =
+    authenticatedVaultConnection manager addr <$>
+        vaultAppRoleLogin (unauthenticatedVaultConnection manager addr) roleId secretId
 
 -- | <https://www.vaultproject.io/docs/http/sys-init.html>
 --
@@ -148,28 +161,27 @@ data VaultInitResponse = VaultInitResponse
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultInitResponse where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultInitResponse" $ \v ->
         VaultInitResponse <$>
              v .: "keys" <*>
              v .: "root_token"
-    parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/docs/http/sys-init.html>
 vaultInit
-    :: VaultAddress
+    :: VaultConnection a
     -> Int -- ^ @secret_shares@: The number of shares to split the master key
            -- into
     -> Int -- ^ @secret_threshold@: The number of shares required to
            -- reconstruct the master key. This must be less than or equal to
            -- secret_shares
     -> IO ([VaultUnsealKey], VaultAuthToken) -- ^ master keys and initial root token
-vaultInit addr secretShares secretThreshold = do
+vaultInit conn secretShares secretThreshold = do
     let reqBody = object
             [ "secret_shares" .= secretShares
             , "secret_threshold" .= secretThreshold
             ]
-    manager <- newManager tlsManagerSettings
-    rsp <- vaultRequestJSON manager "PUT" (vaultUrl addr "/sys/init") [] (Just reqBody) [200]
+    rsp <- runVaultRequestUnauthenticated conn $
+        newPutRequest "/sys/init" (Just reqBody)
     let VaultInitResponse{_VaultInitResponse_Keys, _VaultInitResponse_RootToken} = rsp
     pure (map VaultUnsealKey _VaultInitResponse_Keys, _VaultInitResponse_RootToken)
 
@@ -185,18 +197,15 @@ data VaultSealStatus = VaultSealStatus
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultSealStatus where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultSealStatus" $ \v ->
         VaultSealStatus <$>
              v .: "sealed" <*>
              v .: "t" <*>
              v .: "n" <*>
              v .: "progress"
-    parseJSON _ = fail "Not an Object"
 
-vaultSealStatus :: VaultAddress -> IO VaultSealStatus
-vaultSealStatus addr = do
-    manager <- newManager tlsManagerSettings
-    vaultRequestJSON manager "GET" (vaultUrl addr "/sys/seal-status") [] (Nothing :: Maybe ()) [200]
+vaultSealStatus :: VaultConnection a -> IO VaultSealStatus
+vaultSealStatus conn = runVaultRequestUnauthenticated conn (newGetRequest "/sys/seal-status")
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html>
 --
@@ -210,13 +219,12 @@ data VaultAuth = VaultAuth
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultAuth where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultAuth" $ \v ->
         VaultAuth <$>
             v .: "renewable" <*>
             v .: "lease_duration" <*>
             v .: "policies" <*>
             v .: "client_token"
-    parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html>
 --
@@ -233,7 +241,7 @@ data VaultAppRoleResponse = VaultAppRoleResponse
     deriving (Show, Eq)
 
 instance FromJSON VaultAppRoleResponse where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultAppRoleResponse" $ \v ->
         VaultAppRoleResponse <$>
             v .:? "auth" <*>
             v .: "warnings" <*>
@@ -242,15 +250,14 @@ instance FromJSON VaultAppRoleResponse where
             v .: "lease_duration" <*>
             v .: "renewable" <*>
             v .: "lease_id"
-    parseJSON _ = fail "Not an Object"
-
-authTokenHeader :: VaultAuthToken -> Header
-authTokenHeader (VaultAuthToken token) = ("X-Vault-Token", T.encodeUtf8 token)
 
 -- | <https://www.vaultproject.io/docs/auth/approle.html>
-vaultAppRoleLogin :: VaultAddress -> Manager -> VaultAppRoleId -> VaultAppRoleSecretId -> IO VaultAuthToken
-vaultAppRoleLogin addr manager roleId secretId = do
-    response <- vaultRequestJSON manager "POST" (vaultUrl addr "/auth/approle/login") [] (Just reqBody) [200]
+vaultAppRoleLogin :: VaultConnection a -> VaultAppRoleId -> VaultAppRoleSecretId -> IO VaultAuthToken
+vaultAppRoleLogin conn roleId secretId = do
+    response <-
+        runVaultRequestUnauthenticated
+            conn
+            (newPostRequest "/auth/approle/login" $ Just reqBody)
     maybe failOnNullAuth (return . _VaultAuth_ClientToken) $ _VaultAppRoleResponse_Auth response
   where
   reqBody = object
@@ -260,31 +267,32 @@ vaultAppRoleLogin addr manager roleId secretId = do
   failOnNullAuth = fail "Auth on login is null"
 
 -- | <https://www.vaultproject.io/docs/auth/approle.html#via-the-api-1>
-vaultAuthEnable :: VaultConnection -> Text -> IO ()
-vaultAuthEnable VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} authMethod = do
-    _ <- vaultRequest _VaultConnection_Manager "POST" (vaultUrl _VaultConnection_VaultAddress "/sys/auth/" ++ T.unpack authMethod) headers (Just reqBody) [204]
-    pure ()
+vaultAuthEnable :: VaultConnection Authenticated-> Text -> IO ()
+vaultAuthEnable conn authMethod =
+    runVaultRequestAuthenticated_ conn
+        . withStatusCodes [200, 204]
+        $ newPostRequest ("/sys/auth/" <> authMethod) (Just reqBody)
   where
   reqBody = object [ "type" .= authMethod ]
-  headers = [authTokenHeader _VaultConnection_AuthToken]
 
 -- | <https://www.vaultproject.io/api/system/policies.html#create-update-acl-policy>
-vaultPolicyCreate :: VaultConnection -> Text -> Text -> IO ()
-vaultPolicyCreate VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} policyName policy = do
-    _ <- vaultRequest _VaultConnection_Manager "PUT" (vaultUrl _VaultConnection_VaultAddress "/sys/policies/acl/" ++ T.unpack policyName) headers (Just reqBody) [204]
-    pure ()
+vaultPolicyCreate :: VaultConnection Authenticated -> Text -> Text -> IO ()
+vaultPolicyCreate conn policyName policy =
+    runVaultRequestAuthenticated_ conn
+        . withStatusCodes [200, 204]
+        $ newPutRequest
+            ("/sys/policies/acl/" <> policyName)
+            (Just reqBody)
     where
     reqBody = object [ "policy" .= policy ]
-    headers = [authTokenHeader _VaultConnection_AuthToken]
 
-data VaultAppRoleListResponse = VaultAppRoleListResponse
+newtype VaultAppRoleListResponse = VaultAppRoleListResponse
     { _VaultAppRoleListResponse_AppRoles :: [Text] }
 
 instance FromJSON VaultAppRoleListResponse where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultAppRoleListResponse" $ \v ->
         VaultAppRoleListResponse <$>
             v .: "keys"
-    parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#create-new-approle>
 --
@@ -317,7 +325,7 @@ instance ToJSON VaultAppRoleParameters where
         t .=? x = (t .=) <$> x
 
 instance FromJSON VaultAppRoleParameters where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultAppRoleParameters" $ \v ->
         VaultAppRoleParameters <$>
             v .: "bind_secret_id" <*>
             v .: "policies" <*>
@@ -327,29 +335,25 @@ instance FromJSON VaultAppRoleParameters where
             v .:? "token_ttl" <*>
             v .:? "token_max_ttl" <*>
             v .:? "period"
-    parseJSON _ = fail "Not an Object"
 
 defaultVaultAppRoleParameters :: VaultAppRoleParameters
 defaultVaultAppRoleParameters = VaultAppRoleParameters True [] Nothing Nothing Nothing Nothing Nothing Nothing
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#create-new-approle>
-vaultAppRoleCreate :: VaultConnection -> Text -> VaultAppRoleParameters -> IO ()
-vaultAppRoleCreate VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} appRoleName varp = do
-    _ <- vaultRequest _VaultConnection_Manager "POST" (vaultUrl _VaultConnection_VaultAddress "/auth/approle/role/" ++ T.unpack appRoleName) headers (Just varp) [204]
-    pure ()
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
+vaultAppRoleCreate :: VaultConnection Authenticated -> Text -> VaultAppRoleParameters -> IO ()
+vaultAppRoleCreate conn appRoleName varp =
+    runVaultRequestAuthenticated_ conn
+    . withStatusCodes [200, 204]
+    $ newPostRequest ("/auth/approle/role/" <> appRoleName) (Just varp)
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#read-approle-role-id>
-vaultAppRoleRoleIdRead :: VaultConnection -> Text -> IO VaultAppRoleId
-vaultAppRoleRoleIdRead VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} appRoleName = do
-    response <- vaultRequestJSON _VaultConnection_Manager "GET" (vaultUrl _VaultConnection_VaultAddress "/auth/approle/role/" ++ T.unpack appRoleName ++ "/role-id") headers (Nothing :: Maybe ()) [200]
+vaultAppRoleRoleIdRead :: VaultConnection Authenticated -> Text -> IO VaultAppRoleId
+vaultAppRoleRoleIdRead conn appRoleName = do
+    response <- runVaultRequestAuthenticated conn $ newGetRequest ("/auth/approle/role/" <> appRoleName <> "/role-id")
     let d = _VaultAppRoleResponse_Data response
     case parseEither parseJSON d of
-      Left err -> throwIO $ VaultException_ParseBodyError "GET" ("/auth/approle/role/" ++ T.unpack appRoleName ++ "/role-id") (encode d) err
+      Left err -> throwIO $ VaultException_ParseBodyError "GET" ("/auth/approle/role/" <> appRoleName <> "/role-id") (encode d) (T.pack err)
       Right obj -> return obj
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
 
 data VaultAppRoleSecretIdGenerateResponse = VaultAppRoleSecretIdGenerateResponse
     { _VaultAppRoleSecretIdGenerateResponse_SecretIdAccessor :: VaultAppRoleSecretIdAccessor
@@ -357,30 +361,27 @@ data VaultAppRoleSecretIdGenerateResponse = VaultAppRoleSecretIdGenerateResponse
     }
 
 instance FromJSON VaultAppRoleSecretIdGenerateResponse where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultAppRoleSecretIdGenerateResponse" $ \v ->
         VaultAppRoleSecretIdGenerateResponse <$>
             v .: "secret_id_accessor" <*>
             v .: "secret_id"
-    parseJSON _ = fail "Not an Object"
 
 -- | <https://www.vaultproject.io/api/auth/approle/index.html#generate-new-secret-id>
-vaultAppRoleSecretIdGenerate :: VaultConnection -> Text -> Text -> IO VaultAppRoleSecretIdGenerateResponse
-vaultAppRoleSecretIdGenerate VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} appRoleName metadata = do
-    response <- vaultRequestJSON _VaultConnection_Manager "POST" (vaultUrl _VaultConnection_VaultAddress "/auth/approle/role/" ++ T.unpack appRoleName ++ "/secret-id") headers (Just reqBody) [200]
+vaultAppRoleSecretIdGenerate :: VaultConnection Authenticated -> Text -> Text -> IO VaultAppRoleSecretIdGenerateResponse
+vaultAppRoleSecretIdGenerate conn appRoleName metadata = do
+    response <- runVaultRequestAuthenticated conn $ newPostRequest ("/auth/approle/role/" <> appRoleName <> "/secret-id") (Just reqBody)
     let d = _VaultAppRoleResponse_Data response
     case parseEither parseJSON d of
-      Left err -> throwIO $ VaultException_ParseBodyError "POST" ("/auth/approle/role/" ++ T.unpack appRoleName ++ "/secret-id") (encode d) err
+      Left err -> throwIO $ VaultException_ParseBodyError "POST" ("/auth/approle/role/" <> appRoleName <> "/secret-id") (encode d) (T.pack err)
       Right obj -> return obj
     where
     reqBody = object[ "metadata" .= metadata ]
-    headers = [authTokenHeader _VaultConnection_AuthToken]
 
-vaultSeal :: VaultConnection -> IO ()
-vaultSeal VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} = do
-    _ <- vaultRequest _VaultConnection_Manager "PUT" (vaultUrl _VaultConnection_VaultAddress "/sys/seal") headers (Nothing :: Maybe ()) [204]
-    pure ()
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
+vaultSeal :: VaultConnection Authenticated -> IO ()
+vaultSeal conn =
+    runVaultRequestAuthenticated_ conn
+        . withStatusCodes [200, 204]
+        $ newPutRequest "/sys/seal" (Nothing :: Maybe ())
 
 -- | <https://www.vaultproject.io/docs/http/sys-unseal.html>
 --
@@ -391,8 +392,8 @@ data VaultUnseal
     deriving (Show, Eq, Ord)
 
 -- | <https://www.vaultproject.io/docs/http/sys-unseal.html>
-vaultUnseal :: VaultAddress -> VaultUnseal -> IO VaultSealStatus
-vaultUnseal addr unseal = do
+vaultUnseal :: VaultConnection a -> VaultUnseal -> IO VaultSealStatus
+vaultUnseal conn unseal = do
     let reqBody = case unseal of
             VaultUnseal_Key (VaultUnsealKey key) -> object
                 [ "key" .= key
@@ -400,35 +401,37 @@ vaultUnseal addr unseal = do
             VaultUnseal_Reset -> object
                 [ "reset" .= True
                 ]
-    manager <- newManager tlsManagerSettings
-    vaultRequestJSON manager "PUT" (vaultUrl addr "/sys/unseal") [] (Just reqBody) [200]
+    runVaultRequestUnauthenticated conn $ newPutRequest "/sys/unseal" (Just reqBody)
 
-type VaultMountRead = VaultMount Text VaultMountConfigRead
-type VaultMountWrite = VaultMount (Maybe Text) (Maybe VaultMountConfigWrite)
+type VaultMountRead = VaultMount Text VaultMountConfigRead (Maybe VaultMountConfigOptions)
+type VaultMountWrite = VaultMount (Maybe Text) (Maybe VaultMountConfigWrite) (Maybe VaultMountConfigOptions)
 type VaultMountConfigRead = VaultMountConfig Int
 type VaultMountConfigWrite = VaultMountConfig (Maybe Int)
+type VaultMountConfigOptions = VaultMountOptions (Maybe Int)
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
-data VaultMount a b = VaultMount
+data VaultMount a b c = VaultMount
     { _VaultMount_Type :: Text
     , _VaultMount_Description :: a
     , _VaultMount_Config :: b
+    , _VaultMount_Options :: c
     }
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultMountRead where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultMountRead" $ \v ->
         VaultMount <$>
              v .: "type" <*>
              v .: "description" <*>
-             v .: "config"
-    parseJSON _ = fail "Not an Object"
+             v .: "config" <*>
+             v .: "options"
 
 instance ToJSON VaultMountWrite where
     toJSON v = object
         [ "type" .= _VaultMount_Type v
         , "description" .= _VaultMount_Description v
         , "config" .= _VaultMount_Config v
+        , "options" .= _VaultMount_Options v
         ]
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
@@ -439,11 +442,10 @@ data VaultMountConfig a = VaultMountConfig
     deriving (Show, Eq, Ord)
 
 instance FromJSON VaultMountConfigRead where
-    parseJSON (Object v) =
+    parseJSON = withObject "VaultMountConfigRead" $ \v ->
         VaultMountConfig <$>
              v .: "default_lease_ttl" <*>
              v .: "max_lease_ttl"
-    parseJSON _ = fail "Not an Object"
 
 instance ToJSON VaultMountConfigWrite where
     toJSON v = object
@@ -454,13 +456,28 @@ instance ToJSON VaultMountConfigWrite where
 formatSeconds :: Int -> String
 formatSeconds n = show n ++ "s"
 
+newtype VaultMountOptions a = VaultMountOptions
+    { _VaultMountOptions_Version :: a
+    }
+    deriving (Show, Eq, Ord)
+
+instance FromJSON VaultMountConfigOptions where
+    parseJSON = withObject "VaultMountConfigOptions" $ \v ->
+        VaultMountOptions <$> (either fail pure . readEither <$> v .: "version")
+
+instance ToJSON VaultMountConfigOptions where
+    toJSON v =
+        object
+            [ "version" .= (show <$> _VaultMountOptions_Version v)
+            ]
+
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
 --
 -- For your convenience, the results are returned sorted (by the mount point)
-vaultMounts :: VaultConnection -> IO [(Text, VaultMountRead)]
-vaultMounts VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} = do
-    let reqPath = vaultUrl _VaultConnection_VaultAddress "/sys/mounts"
-    rspObj <- vaultRequestJSON _VaultConnection_Manager "GET" reqPath headers (Nothing :: Maybe ()) [200]
+vaultMounts :: VaultConnection Authenticated -> IO [(Text, VaultMountRead)]
+vaultMounts conn = do
+    let reqPath = "/sys/mounts"
+    rspObj <- runVaultRequestAuthenticated conn $ newGetRequest reqPath
 
     -- Vault 0.6.1 has a different format than previous versions.
     -- See <https://github.com/hashicorp/vault/issues/1965>
@@ -471,164 +488,34 @@ vaultMounts VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Mana
             Just v -> v
 
     case parseEither parseJSON root of
-        Left err -> throwIO $ VaultException_ParseBodyError "GET" reqPath (encode rspObj) err
+        Left err -> throwIO $ VaultException_ParseBodyError "GET" reqPath (encode rspObj) (T.pack err)
         Right obj -> pure $ sortOn fst (H.toList obj)
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
-vaultMountTune :: VaultConnection -> Text -> IO VaultMountConfigRead
-vaultMountTune VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} mountPoint = do
-    vaultRequestJSON _VaultConnection_Manager "GET" (vaultUrl _VaultConnection_VaultAddress "/sys/mounts/" ++ T.unpack mountPoint ++ "/tune") headers (Nothing :: Maybe ()) [200]
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
+vaultMountTune :: VaultConnection Authenticated -> Text -> IO VaultMountConfigRead
+vaultMountTune conn mountPoint =
+    runVaultRequestAuthenticated conn
+        . newGetRequest
+        $ "/sys/mounts/" <> mountPoint <> "/tune"
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
-vaultMountSetTune :: VaultConnection -> Text -> VaultMountConfigWrite -> IO ()
-vaultMountSetTune VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} mountPoint mountConfig = do
-    let reqBody = mountConfig
-    _ <- vaultRequest _VaultConnection_Manager "POST" (vaultUrl _VaultConnection_VaultAddress "/sys/mounts/" ++ T.unpack mountPoint ++ "/tune") headers (Just reqBody) [204]
-    pure ()
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
+vaultMountSetTune :: VaultConnection Authenticated -> Text -> VaultMountConfigWrite -> IO ()
+vaultMountSetTune conn mountPoint mountConfig =
+    runVaultRequestAuthenticated_ conn
+        . withStatusCodes [200, 204]
+        $ newPostRequest ("/sys/mounts/" <> mountPoint <> "/tune") (Just mountConfig)
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
-vaultNewMount :: VaultConnection -> Text -> VaultMountWrite -> IO ()
-vaultNewMount VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} mountPoint vaultMount = do
-    let reqBody = vaultMount
-    _ <- vaultRequest _VaultConnection_Manager "POST" (vaultUrl _VaultConnection_VaultAddress "/sys/mounts/" ++ T.unpack mountPoint) headers (Just reqBody) [204]
-    pure ()
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
+vaultNewMount :: VaultConnection Authenticated -> Text -> VaultMountWrite -> IO ()
+vaultNewMount conn mountPoint vaultMount =
+    runVaultRequestAuthenticated_ conn
+        . withStatusCodes [200, 204]
+        $ newPostRequest ("/sys/mounts/" <> mountPoint) (Just vaultMount)
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>
-vaultUnmount :: VaultConnection -> Text -> IO ()
-vaultUnmount VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} mountPoint = do
-    _ <- vaultRequest _VaultConnection_Manager "DELETE" (vaultUrl _VaultConnection_VaultAddress "/sys/mounts/" ++ T.unpack mountPoint) headers (Nothing :: Maybe ()) [204]
-    pure ()
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
-
-data VaultSecretMetadata = VaultSecretMetadata
-    { _VaultSecretMetadata_leaseDuration :: Int
-    , _VaultSecretMetadata_leaseId :: Text
-    , _VauleSecretMetadata_renewable :: Bool
-    }
-    deriving (Show, Eq {- TODO Ord #-})
-
-instance FromJSON VaultSecretMetadata where
-    parseJSON (Object v) =
-        VaultSecretMetadata <$>
-            v .: "lease_duration" <*>
-            v .: "lease_id" <*>
-            v .: "renewable"
-    parseJSON _ = fail "Not an Object"
-
--- | <https://www.vaultproject.io/docs/secrets/generic/index.html>
---
--- The value that you give must encode as a JSON object
-vaultWrite :: ToJSON a => VaultConnection -> VaultSecretPath -> a -> IO ()
-vaultWrite VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} (VaultSecretPath location) value = do
-    let reqBody = value
-    _ <- vaultRequest _VaultConnection_Manager "POST" (vaultUrl _VaultConnection_VaultAddress "/" ++ T.unpack location) headers (Just reqBody) [204]
-    pure ()
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
-
-vaultRead
-    :: FromJSON a
-    => VaultConnection
-    -> VaultSecretPath
-    -> IO (VaultSecretMetadata, Either (Value, String) a) -- ^ A 'Left' result
-                                                          -- means that the
-                                                          -- secret's "data"
-                                                          -- could not be
-                                                          -- parsed into the
-                                                          -- data structure
-                                                          -- that you
-                                                          -- requested.
-                                                          --
-                                                          -- You will get the
-                                                          -- "data" as a raw
-                                                          -- 'Value' as well as
-                                                          -- the error message
-                                                          -- from the parse
-                                                          -- failure
-vaultRead VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} (VaultSecretPath location) = do
-    let path = vaultUrl _VaultConnection_VaultAddress "/" ++ T.unpack location
-    rspObj <- vaultRequestJSON _VaultConnection_Manager "GET" path headers (Nothing :: Maybe ()) [200]
-    case parseEither parseJSON (Object rspObj) of
-        Left err -> throwIO $ VaultException_ParseBodyError "GET" path (encode rspObj) err
-        Right metadata -> case parseEither (.: "data") rspObj of
-            Left err -> throwIO $ VaultException_ParseBodyError "GET" path (encode rspObj) err
-            Right dataObj -> case parseEither parseJSON (Object dataObj) of
-                Left err -> pure (metadata, Left (Object dataObj, err))
-                Right data_ -> pure (metadata, Right data_)
-
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
-
--- | <https://www.vaultproject.io/docs/secrets/generic/index.html>
-vaultDelete :: VaultConnection -> VaultSecretPath -> IO ()
-vaultDelete VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} (VaultSecretPath location) = do
-    _ <- vaultRequest _VaultConnection_Manager "DELETE" (vaultUrl _VaultConnection_VaultAddress "/" ++ T.unpack location) headers (Nothing :: Maybe ()) [204]
-    pure ()
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
-
-data VaultListResult = VaultListResult [Text]
-
-instance FromJSON VaultListResult where
-    parseJSON (Object v) = do
-        data_ <- v .: "data"
-        keys <- data_ .: "keys"
-        pure (VaultListResult keys)
-    parseJSON _ = fail "Not an Object"
-
--- | <https://www.vaultproject.io/docs/secrets/generic/index.html>
---
--- This will normalise the results to be full secret paths.
---
--- Will return only secrets that in the are located in the folder hierarchy
--- directly below the given folder.
---
--- Use 'isFolder' to check if whether each result is a secret or a subfolder.
---
--- The order of the results is unspecified.
---
--- To recursively retrieve all of the secrets use 'vaultListRecursive'
-vaultList :: VaultConnection -> VaultSecretPath -> IO [VaultSecretPath]
-vaultList VaultConnection{_VaultConnection_VaultAddress, _VaultConnection_Manager, _VaultConnection_AuthToken} (VaultSecretPath location) = do
-    VaultListResult keys <- vaultRequestJSON _VaultConnection_Manager "LIST" (vaultUrl _VaultConnection_VaultAddress "/" ++ T.unpack location) headers (Nothing :: Maybe ()) [200]
-    pure $ map (VaultSecretPath . (withTrailingSlash `T.append`)) keys
-    where
-    headers = [authTokenHeader _VaultConnection_AuthToken]
-    withTrailingSlash
-        | T.null location = "/"
-        | T.last location == '/' = location
-        | otherwise = location `T.snoc` '/'
-
--- | Does the path end with a '/' character?
---
--- Meant to be used on the results of 'vaultList'
-isFolder :: VaultSecretPath -> Bool
-isFolder (VaultSecretPath path)
-    | T.null path = False
-    | otherwise = T.last path == '/'
-
--- | Recursively calls 'vaultList' to retrieve all of the secrets in a folder
--- (including all subfolders and sub-subfolders, etc...)
---
--- There will be no folders in the result.
---
--- The order of the results is unspecified.
-vaultListRecursive :: VaultConnection -> VaultSecretPath -> IO [VaultSecretPath]
-vaultListRecursive conn location = do
-    paths <- vaultList conn location
-    (flip concatMapM) paths $ \path -> do
-        if isFolder path
-            then vaultListRecursive conn path
-            else pure [path]
-
-concatMapM        :: (Monad m) => (a -> m [b]) -> [a] -> m [b]
-concatMapM f xs   =  liftM concat (mapM f xs)
+vaultUnmount :: VaultConnection Authenticated -> Text -> IO ()
+vaultUnmount conn mountPoint =
+    runVaultRequestAuthenticated_ conn
+        . withStatusCodes [200, 204]
+        . newDeleteRequest
+        $ "/sys/mounts/" <> mountPoint
