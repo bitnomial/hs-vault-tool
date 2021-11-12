@@ -8,16 +8,23 @@ import Control.Exception (catch)
 import Data.Aeson (FromJSON, ToJSON, (.=), object)
 import Data.Functor (($>))
 import Data.List (sort)
+import Data.List.Split (splitOn)
+import Data.Maybe (catMaybes)
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Generics (Generic)
+import Network.HTTP.Client (Manager)
+import Network.URI (URI (..), parseURI)
 import System.Environment (lookupEnv)
 import System.IO.Temp (withSystemTempDirectory)
-import Test.Tasty.HUnit ((@?=), assertBool)
+import Test.Tasty.HUnit ((@?=), assertBool, assertFailure)
 
 import Network.VaultTool (
+    Authenticated,
     VaultAddress,
     VaultAppRoleParameters (..),
     VaultAppRoleSecretIdGenerateResponse (..),
+    VaultConnection,
     VaultException,
     VaultHealth (..),
     VaultMount (..),
@@ -49,15 +56,8 @@ import Network.VaultTool (
     vaultUnmount,
     vaultUnseal,
  )
-import Network.VaultTool.KeyValueV2 (
-    VaultSecretVersion (..),
-    vaultDelete,
-    vaultRead,
-    vaultReadVersion,
-    vaultWrite,
-    vaultList,
-    vaultListRecursive,
- )
+import qualified Network.VaultTool.KeyValueV2 as KeyValueV2
+import qualified Network.VaultTool.TOTP as TOTP
 import Network.VaultTool.VaultServerProcess (
     VaultBackendConfig,
     vaultAddress,
@@ -194,67 +194,9 @@ talkToVault addr = do
     mounts3 <- vaultMounts authConn
     lookup "mymount/" mounts3 @?= Nothing
 
-    let pathBig = mkVaultSecretPath "big"
-    vaultWrite authConn pathBig (object ["A" .= 'a', "B" .= 'b'])
+    keyValueV2Tests authConn manager addr
 
-    r <- vaultRead authConn pathBig
-    vsvData r @?= object ["A" .= 'a', "B" .= 'b']
-
-    let pathFun = mkVaultSecretPath "fun"
-    vaultWrite authConn pathFun (FunStuff "fun" [1, 2, 3])
-    r2 <- vaultRead authConn pathFun
-    vsvData r2 @?= (FunStuff "fun" [1, 2, 3])
-
-    throws (vaultRead authConn pathBig :: IO (VaultSecretVersion FunStuff)) >>= (@?= True)
-
-    let pathFooBarA = mkVaultSecretPath "foo/bar/a"
-        pathFooBarB = mkVaultSecretPath "foo/bar/b"
-        pathFooBarABCDEFG = mkVaultSecretPath "foo/bar/a/b/c/d/e/f/g"
-        pathFooQuackDuck = mkVaultSecretPath "foo/quack/duck"
-
-    vaultWrite authConn pathFooBarA (object ["X" .= 'x'])
-    vaultWrite authConn pathFooBarB (object ["X" .= 'x'])
-    vaultWrite authConn pathFooBarABCDEFG (object ["X" .= 'x'])
-    vaultWrite authConn pathFooQuackDuck (object ["X" .= 'x'])
-
-    let emptySecretPath = mkVaultSecretPath ""
-    keys <- vaultList authConn emptySecretPath
-    assertBool "Secret in list" $ pathBig `elem` keys
-    vaultDelete authConn pathBig
-
-    keys2 <- vaultList authConn emptySecretPath
-    assertBool "Secret not in list" $ not (pathBig `elem` keys2)
-
-    keys3 <- vaultListRecursive authConn (mkVaultSecretPath "foo")
-    sort keys3 @?= sort
-        [ pathFooBarA
-        , pathFooBarB
-        , pathFooBarABCDEFG
-        , pathFooQuackDuck
-        ]
-
-    let pathReadVersionTest = mkVaultSecretPath "read/version/secret"
-    vaultWrite authConn pathReadVersionTest (FunStuff "x" [1])
-    vaultWrite authConn pathReadVersionTest (FunStuff "y" [2, 3])
-    v1Resp <- vaultReadVersion authConn pathReadVersionTest (Just 1)
-    vsvData v1Resp @?= (FunStuff "x" [1])
-    v2Resp <- vaultReadVersion authConn pathReadVersionTest Nothing
-    vsvData v2Resp @?= (FunStuff "y" [2, 3])
-
-    vaultAuthEnable authConn "approle"
-
-    let pathSmall = mkVaultSecretPath "small"
-    vaultWrite authConn pathSmall (object ["X" .= 'x'])
-
-    vaultPolicyCreate authConn "foo" "path \"secret/small\" { capabilities = [\"read\"] }"
-
-    vaultAppRoleCreate authConn "foo-role" defaultVaultAppRoleParameters{_VaultAppRoleParameters_Policies = ["foo"]}
-
-    roleId <- vaultAppRoleRoleIdRead authConn "foo-role"
-    secretId <- _VaultAppRoleSecretIdGenerateResponse_SecretId <$> vaultAppRoleSecretIdGenerate authConn "foo-role" ""
-
-    arConn <- connectToVaultAppRole manager addr roleId secretId
-    throws (vaultRead arConn pathSmall :: IO (VaultSecretVersion FunStuff)) >>= (@?= True)
+    totpTests authConn
 
     vaultSeal authConn
 
@@ -269,6 +211,134 @@ talkToVault addr = do
     health2 <- vaultHealth unauthConn
     _VaultHealth_Initialized health2 @?= True
     _VaultHealth_Sealed health2 @?= True
+
+keyValueV2Tests :: VaultConnection Authenticated -> Manager -> VaultAddress -> IO ()
+keyValueV2Tests authConn manager addr = do
+    let pathBig = mkVaultSecretPath "big"
+    KeyValueV2.vaultWrite authConn pathBig (object ["A" .= 'a', "B" .= 'b'])
+
+    r <- KeyValueV2.vaultRead authConn pathBig
+    KeyValueV2.vsvData r @?= object ["A" .= 'a', "B" .= 'b']
+
+    let pathFun = mkVaultSecretPath "fun"
+    KeyValueV2.vaultWrite authConn pathFun (FunStuff "fun" [1, 2, 3])
+    r2 <- KeyValueV2.vaultRead authConn pathFun
+    KeyValueV2.vsvData r2 @?= (FunStuff "fun" [1, 2, 3])
+
+    throws (KeyValueV2.vaultRead authConn pathBig :: IO (KeyValueV2.VaultSecretVersion FunStuff)) >>= (@?= True)
+
+    let pathFooBarA = mkVaultSecretPath "foo/bar/a"
+        pathFooBarB = mkVaultSecretPath "foo/bar/b"
+        pathFooBarABCDEFG = mkVaultSecretPath "foo/bar/a/b/c/d/e/f/g"
+        pathFooQuackDuck = mkVaultSecretPath "foo/quack/duck"
+
+    KeyValueV2.vaultWrite authConn pathFooBarA (object ["X" .= 'x'])
+    KeyValueV2.vaultWrite authConn pathFooBarB (object ["X" .= 'x'])
+    KeyValueV2.vaultWrite authConn pathFooBarABCDEFG (object ["X" .= 'x'])
+    KeyValueV2.vaultWrite authConn pathFooQuackDuck (object ["X" .= 'x'])
+
+    let emptySecretPath = mkVaultSecretPath ""
+    keys <- KeyValueV2.vaultList authConn emptySecretPath
+    assertBool "Secret in list" $ pathBig `elem` keys
+    KeyValueV2.vaultDelete authConn pathBig
+
+    keys2 <- KeyValueV2.vaultList authConn emptySecretPath
+    assertBool "Secret not in list" $ not (pathBig `elem` keys2)
+
+    keys3 <- KeyValueV2.vaultListRecursive authConn (mkVaultSecretPath "foo")
+    sort keys3 @?= sort
+        [ pathFooBarA
+        , pathFooBarB
+        , pathFooBarABCDEFG
+        , pathFooQuackDuck
+        ]
+
+    let pathReadVersionTest = mkVaultSecretPath "read/version/secret"
+    KeyValueV2.vaultWrite authConn pathReadVersionTest (FunStuff "x" [1])
+    KeyValueV2.vaultWrite authConn pathReadVersionTest (FunStuff "y" [2, 3])
+    v1Resp <- KeyValueV2.vaultReadVersion authConn pathReadVersionTest (Just 1)
+    KeyValueV2.vsvData v1Resp @?= (FunStuff "x" [1])
+    v2Resp <- KeyValueV2.vaultReadVersion authConn pathReadVersionTest Nothing
+    KeyValueV2.vsvData v2Resp @?= (FunStuff "y" [2, 3])
+
+    vaultAuthEnable authConn "approle"
+
+    let pathSmall = mkVaultSecretPath "small"
+    KeyValueV2.vaultWrite authConn pathSmall (object ["X" .= 'x'])
+
+    vaultPolicyCreate authConn "foo" "path \"secret/small\" { capabilities = [\"read\"] }"
+
+    vaultAppRoleCreate authConn "foo-role" defaultVaultAppRoleParameters{_VaultAppRoleParameters_Policies = ["foo"]}
+
+    roleId <- vaultAppRoleRoleIdRead authConn "foo-role"
+    secretId <- _VaultAppRoleSecretIdGenerateResponse_SecretId <$> vaultAppRoleSecretIdGenerate authConn "foo-role" ""
+
+    arConn <- connectToVaultAppRole manager addr roleId secretId
+    throws (KeyValueV2.vaultRead arConn pathSmall :: IO (KeyValueV2.VaultSecretVersion FunStuff)) >>= (@?= True)
+
+totpTests :: VaultConnection Authenticated -> IO ()
+totpTests authConn = do
+    vaultNewMount authConn "totp" VaultMount
+        { _VaultMount_Type = "totp"
+        , _VaultMount_Description = Just "totp test"
+        , _VaultMount_Config = Nothing
+        , _VaultMount_Options = Nothing
+        }
+
+    let pathTOTP = (VaultMountedPath "totp")
+        key1 = "key1"
+        issuer = "Vault"
+        account1 = "test1@test.com"
+
+    genKey <- TOTP.generateKey authConn pathTOTP $ mkGenKeyReq key1 issuer account1
+    case (parseURI . T.unpack $ TOTP.gkrUrl genKey) of
+        Nothing -> assertFailure "unable to parse key url"
+        Just url -> do
+            uriPath url @?= T.unpack ("/" <> issuer <> ":" <> account1)
+            let queryArgs = parseQueryString $ uriQuery url
+            lookup "algorithm" queryArgs @?= Just "SHA1"
+            lookup "digits" queryArgs @?= Just "6"
+            lookup "issuer" queryArgs @?= Just (T.unpack issuer)
+            lookup "period" queryArgs @?= Just "30"
+
+    key <- TOTP.getKey authConn pathTOTP key1
+    TOTP.kAccountName key @?= account1
+    TOTP.kAlgorithm key @?= TOTP.SHA1
+    TOTP.kDigitCount key @?= TOTP.SixDigits
+    TOTP.kIssuer key @?= issuer
+    TOTP.kPeriod key @?= 30
+
+    let key2 = "key2"
+        account2 = "test2@test.com"
+    _ <- TOTP.generateKey authConn pathTOTP $ mkGenKeyReq key2 issuer account2
+    keys <- TOTP.listKeys authConn pathTOTP
+    sort (TOTP.unKeyNames keys) @?= [key1, key2]
+
+    TOTP.deleteKey authConn pathTOTP key2
+    throws (TOTP.getKey authConn pathTOTP key2) >>= (@?= True)
+
+    code <- TOTP.generateCode authConn pathTOTP key1
+    validateCodeResp1 <- TOTP.validateCode authConn pathTOTP key1 code
+    validateCodeResp1 @?= TOTP.ValidCode
+
+    validateCodeResp2 <- TOTP.validateCode authConn pathTOTP key1 (TOTP.Code "00000")
+    validateCodeResp2 @?= TOTP.InvalidCode
+  where
+    parseQueryString = catMaybes . map (toPair . splitOn "=") . splitOn "&" . drop 1
+    toPair [x,y] = Just (x, y)
+    toPair _ = Nothing
+    mkGenKeyReq keyName issuer account =
+        TOTP.GenerateKeyRequest
+            { TOTP.gkrKeyName = keyName
+            , TOTP.gkrIssuer = issuer
+            , TOTP.gkrAccountName = account
+            , TOTP.gkrKeySize = Nothing
+            , TOTP.gkrPeriod = Nothing
+            , TOTP.gkrAlgorithm = Nothing
+            , TOTP.gkrDigitCount = Nothing
+            , TOTP.gkrSkew = Nothing
+            , TOTP.gkrQrSize = Nothing
+            }
 
 data FunStuff = FunStuff
     { funString :: String

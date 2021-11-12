@@ -45,6 +45,9 @@ test-suite test
                        vault-tool >=0.2.0.0,
                        vault-tool-server,
                        aeson,
+                       http-client,
+                       network-uri,
+                       split,
                        tasty-hunit,
                        temporary,
                        text
