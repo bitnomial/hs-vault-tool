@@ -328,18 +328,7 @@ totpTests authConn = do
     parseQueryString = mapMaybe (toPair . splitOn "=") . splitOn "&" . drop 1
     toPair [x,y] = Just (x, y)
     toPair _ = Nothing
-    mkGenKeyReq keyName issuer account =
-        TOTP.GenerateKeyRequest
-            { TOTP.gkrKeyName = keyName
-            , TOTP.gkrIssuer = issuer
-            , TOTP.gkrAccountName = account
-            , TOTP.gkrKeySize = Nothing
-            , TOTP.gkrPeriod = Nothing
-            , TOTP.gkrAlgorithm = Nothing
-            , TOTP.gkrDigitCount = Nothing
-            , TOTP.gkrSkew = Nothing
-            , TOTP.gkrQrSize = Nothing
-            }
+    mkGenKeyReq keyName issuer account = TOTP.mkGenerateKeyRequest keyName issuer account
 
 data FunStuff = FunStuff
     { funString :: String

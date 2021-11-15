@@ -13,6 +13,7 @@ module Network.VaultTool.TOTP (
     DigitCount (..),
     Skew (..),
     GeneratedKey (..),
+    mkGenerateKeyRequest,
     generateKey,
 
     Key (..),
@@ -57,6 +58,15 @@ import Network.VaultTool.Types (
     VaultConnection,
     VaultMountedPath (..),
  )
+
+-- | The name associated with a TOTP key
+type KeyName = Text
+
+-- | The issuer associated with a TOTP key
+type Issuer = Text
+
+-- | The acconut name associated with a TOTP key
+type AccountName = Text
 
 -- | The data needed for vault to generate a TOTP Key
 -- <https://www.vaultproject.io/api-docs/secret/totp#parameters>
@@ -145,6 +155,20 @@ instance FromJSON GeneratedKey where
     parseJSON = withObject "GeneratedKey" $ \v ->
         GeneratedKey <$> v .: "barcode" <*> v .: "url"
 
+-- | Constructs a 'GenerateKeyRequest' with the given required fields and defaults all the optional (Maybe) fields to Nothing
+mkGenerateKeyRequest :: KeyName -> Issuer -> AccountName -> GenerateKeyRequest
+mkGenerateKeyRequest keyName issuer accountName = GenerateKeyRequest
+    { gkrKeyName = keyName
+    , gkrIssuer = issuer
+    , gkrAccountName = accountName
+    , gkrKeySize = Nothing
+    , gkrPeriod = Nothing
+    , gkrAlgorithm = Nothing
+    , gkrDigitCount = Nothing
+    , gkrSkew = Nothing
+    , gkrQrSize = Nothing
+    }
+
 -- | Generates a new TOTP code via Vault's TOTP API
 generateKey :: VaultConnection Authenticated -> VaultMountedPath -> GenerateKeyRequest -> IO GeneratedKey
 generateKey conn path req = fmap unDataWrapper
@@ -184,7 +208,7 @@ getKey conn path = fmap unDataWrapper
     . mkPathWithKey KeysNamespace path
 
 -- | Represents a list of key names
-newtype KeyNames = KeyNames {unKeyNames :: [Text]}
+newtype KeyNames = KeyNames {unKeyNames :: [KeyName]}
     deriving (Show, Eq)
 
 instance FromJSON KeyNames where
@@ -229,7 +253,7 @@ instance FromJSON CodeStatus where
     parseJSON = withObject "Valid" $ fmap (bool InvalidCode ValidCode) . (.: "valid")
 
 -- | Validate the TOTP 'Code' generated for the given key
-validateCode :: VaultConnection Authenticated -> VaultMountedPath -> Text -> Code -> IO CodeStatus
+validateCode :: VaultConnection Authenticated -> VaultMountedPath -> KeyName -> Code -> IO CodeStatus
 validateCode conn path keyName = fmap unDataWrapper
     . runVaultRequestAuthenticated conn
     . newPostRequest (mkPathWithKey CodeNamespace path keyName)
@@ -243,7 +267,7 @@ mkPathWithKey namespace path = vaultEndpointPath namespace path . Just
 mkPathWithoutKey :: EndpointNamespace -> VaultMountedPath -> Text
 mkPathWithoutKey namespace path = vaultEndpointPath namespace path Nothing
 
-vaultEndpointPath :: EndpointNamespace -> VaultMountedPath -> Maybe Text -> Text
+vaultEndpointPath :: EndpointNamespace -> VaultMountedPath -> Maybe KeyName -> Text
 vaultEndpointPath namespace (VaultMountedPath mountedPath) keyName = T.intercalate "/"
     $ catMaybes [Just mountedPath, Just (toText namespace), keyName]
   where
