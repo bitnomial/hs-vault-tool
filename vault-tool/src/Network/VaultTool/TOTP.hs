@@ -142,11 +142,13 @@ instance ToJSON Skew where
         NoSkew -> Number 0
         OnePeriodSkew -> Number 1
 
--- | The newly generated Vault TOTP key
+-- | The newly generated Vault TOTP key which includes a
+-- [TOTP Key URI](https://github.com/google/google-authenticator/wiki/Key-Uri-Format)
+-- and a base64 encoded QR code representation of the TOTP Key URI.
 data GeneratedKey = GeneratedKey
-    { -- | The resulting base64 encoded QR code PNG
+    { -- | The resulting base64 encoded QR code PNG which contains the TOTP Key URI
       gkrBarcode :: Text,
-      -- | The resulting otpauth url for the key
+      -- | The resulting [TOTP Key URI](https://github.com/google/google-authenticator/wiki/Key-Uri-Format)
       gkrUrl :: Text
     }
     deriving (Show, Eq)
