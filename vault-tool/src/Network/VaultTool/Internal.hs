@@ -92,7 +92,7 @@ vaultAddress (AuthenticatedVaultConnection _ a _) = a
 vaultRequest :: ToJSON a => VaultConnection b -> VaultRequest a -> IO BL.ByteString
 vaultRequest conn VaultRequest{vrMethod, vrPath, vrBody, vrExpectedStatuses} = do
     initReq <- case parseRequest absolutePath of
-        Nothing -> throwIO $ VaultException_InvalidAddress vrMethod vrPath
+        Nothing -> throwIO $ InvalidAddress vrMethod vrPath
         Just initReq -> pure initReq
     let reqBody = maybe BL.empty encode vrBody
         req = initReq
@@ -103,7 +103,7 @@ vaultRequest conn VaultRequest{vrMethod, vrPath, vrBody, vrExpectedStatuses} = d
     rsp <- httpLbs req (vaultConnectionManager conn)
     let s = statusCode (responseStatus rsp)
     unless (s `elem` vrExpectedStatuses) $ do
-        throwIO $ VaultException_BadStatusCode vrMethod vrPath reqBody s (responseBody rsp)
+        throwIO $ BadStatusCode vrMethod vrPath reqBody s (responseBody rsp)
     pure (responseBody rsp)
   where
     absolutePath = T.unpack $ T.intercalate "/" [unVaultAddress (vaultAddress conn), "v1", vrPath]
@@ -123,7 +123,7 @@ runVaultRequest :: (FromJSON b, ToJSON a) => VaultConnection c -> VaultRequest a
 runVaultRequest conn req@VaultRequest{vrMethod, vrPath} = do
     rspBody <- vaultRequest conn req
     case eitherDecode' rspBody of
-        Left err -> throwIO $ VaultException_ParseBodyError vrMethod vrPath rspBody (T.pack err)
+        Left err -> throwIO $ ParseBodyError vrMethod vrPath rspBody (T.pack err)
         Right x -> pure x
 
 runVaultRequestAuthenticated_ :: (ToJSON a) => VaultConnection Authenticated -> VaultRequest a -> IO ()

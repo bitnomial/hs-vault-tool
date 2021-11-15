@@ -102,9 +102,9 @@ instance ToJSON VaultAppRoleSecretIdAccessor where
 
 data VaultException
     = VaultException
-    | VaultException_InvalidAddress ByteString Text
-    | VaultException_BadStatusCode ByteString Text BL.ByteString Int BL.ByteString
-    | VaultException_ParseBodyError ByteString Text BL.ByteString Text
+    | InvalidAddress ByteString Text
+    | BadStatusCode ByteString Text BL.ByteString Int BL.ByteString
+    | ParseBodyError ByteString Text BL.ByteString Text
     deriving (Show, Eq)
 
 instance Exception VaultException

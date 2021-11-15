@@ -9,7 +9,7 @@ import Data.Aeson (FromJSON, ToJSON, (.=), object)
 import Data.Functor (($>))
 import Data.List (sort)
 import Data.List.Split (splitOn)
-import Data.Maybe (catMaybes)
+import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
@@ -105,6 +105,7 @@ talkToVault addr = do
     (unsealKeys, rootToken) <- vaultInit unauthConn 4 2
 
     length unsealKeys @?= 4
+    let [key1, key2, key3, _] = unsealKeys
 
     status0 <- vaultSealStatus unauthConn
     status0 @?= VaultSealStatus
@@ -114,7 +115,7 @@ talkToVault addr = do
         , _VaultSealStatus_Progress = 0
         }
 
-    status1 <- vaultUnseal unauthConn (VaultUnseal_Key (unsealKeys !! 0))
+    status1 <- vaultUnseal unauthConn (MasterKey key1)
     status1 @?= VaultSealStatus
         { _VaultSealStatus_Sealed = True
         , _VaultSealStatus_T = 2
@@ -122,7 +123,7 @@ talkToVault addr = do
         , _VaultSealStatus_Progress = 1
         }
 
-    status2 <- vaultUnseal unauthConn VaultUnseal_Reset
+    status2 <- vaultUnseal unauthConn Reset
     status2 @?= VaultSealStatus
         { _VaultSealStatus_Sealed = True
         , _VaultSealStatus_T = 2
@@ -130,7 +131,7 @@ talkToVault addr = do
         , _VaultSealStatus_Progress = 0
         }
 
-    status3 <- vaultUnseal unauthConn (VaultUnseal_Key (unsealKeys !! 1))
+    status3 <- vaultUnseal unauthConn (MasterKey key2)
     status3 @?= VaultSealStatus
         { _VaultSealStatus_Sealed = True
         , _VaultSealStatus_T = 2
@@ -138,7 +139,7 @@ talkToVault addr = do
         , _VaultSealStatus_Progress = 1
         }
 
-    status4 <- vaultUnseal unauthConn (VaultUnseal_Key (unsealKeys !! 2))
+    status4 <- vaultUnseal unauthConn (MasterKey key3)
     status4 @?= VaultSealStatus
         { _VaultSealStatus_Sealed = False
         , _VaultSealStatus_T = 2
@@ -223,7 +224,7 @@ keyValueV2Tests authConn manager addr = do
     let pathFun = mkVaultSecretPath "fun"
     KeyValueV2.vaultWrite authConn pathFun (FunStuff "fun" [1, 2, 3])
     r2 <- KeyValueV2.vaultRead authConn pathFun
-    KeyValueV2.vsvData r2 @?= (FunStuff "fun" [1, 2, 3])
+    KeyValueV2.vsvData r2 @?= FunStuff "fun" [1, 2, 3]
 
     throws (KeyValueV2.vaultRead authConn pathBig :: IO (KeyValueV2.VaultSecretVersion FunStuff)) >>= (@?= True)
 
@@ -243,7 +244,7 @@ keyValueV2Tests authConn manager addr = do
     KeyValueV2.vaultDelete authConn pathBig
 
     keys2 <- KeyValueV2.vaultList authConn emptySecretPath
-    assertBool "Secret not in list" $ not (pathBig `elem` keys2)
+    assertBool "Secret not in list" $ pathBig `notElem` keys2
 
     keys3 <- KeyValueV2.vaultListRecursive authConn (mkVaultSecretPath "foo")
     sort keys3 @?= sort
@@ -257,9 +258,9 @@ keyValueV2Tests authConn manager addr = do
     KeyValueV2.vaultWrite authConn pathReadVersionTest (FunStuff "x" [1])
     KeyValueV2.vaultWrite authConn pathReadVersionTest (FunStuff "y" [2, 3])
     v1Resp <- KeyValueV2.vaultReadVersion authConn pathReadVersionTest (Just 1)
-    KeyValueV2.vsvData v1Resp @?= (FunStuff "x" [1])
+    KeyValueV2.vsvData v1Resp @?= FunStuff "x" [1]
     v2Resp <- KeyValueV2.vaultReadVersion authConn pathReadVersionTest Nothing
-    KeyValueV2.vsvData v2Resp @?= (FunStuff "y" [2, 3])
+    KeyValueV2.vsvData v2Resp @?= FunStuff "y" [2, 3]
 
     vaultAuthEnable authConn "approle"
 
@@ -285,13 +286,13 @@ totpTests authConn = do
         , _VaultMount_Options = Nothing
         }
 
-    let pathTOTP = (VaultMountedPath "totp")
+    let pathTOTP = VaultMountedPath "totp"
         key1 = "key1"
         issuer = "Vault"
         account1 = "test1@test.com"
 
     genKey <- TOTP.generateKey authConn pathTOTP $ mkGenKeyReq key1 issuer account1
-    case (parseURI . T.unpack $ TOTP.gkrUrl genKey) of
+    case parseURI . T.unpack $ TOTP.gkrUrl genKey of
         Nothing -> assertFailure "unable to parse key url"
         Just url -> do
             uriPath url @?= T.unpack ("/" <> issuer <> ":" <> account1)
@@ -324,7 +325,7 @@ totpTests authConn = do
     validateCodeResp2 <- TOTP.validateCode authConn pathTOTP key1 (TOTP.Code "00000")
     validateCodeResp2 @?= TOTP.InvalidCode
   where
-    parseQueryString = catMaybes . map (toPair . splitOn "=") . splitOn "&" . drop 1
+    parseQueryString = mapMaybe (toPair . splitOn "=") . splitOn "&" . drop 1
     toPair [x,y] = Just (x, y)
     toPair _ = Nothing
     mkGenKeyReq keyName issuer account =

@@ -138,10 +138,10 @@ data VaultServerProcess = VaultServerProcess
     }
 
 data VaultServerLaunchException
-    = VaultServerLaunchException_VaultStartTimeout
-    | VaultServerLaunchException_ConnectTimeout
-    | VaultServerLaunchException_ExecFailure IOException
-    | VaultServerLaunchException_ProcessFailure ExitCode Text
+    = VaultStartTimeout
+    | ConnectTimeout
+    | ExecFailure IOException
+    | ProcessFailure ExitCode Text
     deriving (Show, Eq)
 
 instance Exception VaultServerLaunchException
@@ -166,11 +166,11 @@ launchVaultServerProcess mbVaultExe vaultConfigFile addr = do
     vaultExe = fromMaybe "vault" mbVaultExe
     waitUntilRunningThread stdoutH = do
         withAsync (waitUntilVaultStarted stdoutH) $ \startA -> do
-            withAsync (timeout vaultStartTimeoutMilliseconds VaultServerLaunchException_VaultStartTimeout) $ \timeoutA -> do
+            withAsync (timeout vaultStartTimeoutMilliseconds VaultStartTimeout) $ \timeoutA -> do
                 _ <- waitAnyCancel [startA, timeoutA]
                 pure ()
         withAsync waitUntilVaultConnect $ \connectA -> do
-            withAsync (timeout vaultConnectTimeoutMilliseconds VaultServerLaunchException_ConnectTimeout) $ \timeoutA -> do
+            withAsync (timeout vaultConnectTimeoutMilliseconds ConnectTimeout) $ \timeoutA -> do
                 _ <- waitAnyCancel [connectA, timeoutA]
                 pure ()
     checkProcessFailureThread vs = do
@@ -178,7 +178,7 @@ launchVaultServerProcess mbVaultExe vaultConfigFile addr = do
         case mbExitCode of
             Just exitCode -> do
                 stderrText <- T.hGetContents (vs_stderrH vs)
-                throwIO $ VaultServerLaunchException_ProcessFailure exitCode stderrText
+                throwIO $ ProcessFailure exitCode stderrText
             Nothing -> do
                 threadDelay (checkExitedSnoozeMilliseconds * 1000)
                 checkProcessFailureThread vs
@@ -219,7 +219,7 @@ execProcess vaultExe vaultConfigFile = do
                                             , close_fds = True
                                             }
     case tryResult of
-        Left ex -> throwIO $ VaultServerLaunchException_ExecFailure ex
+        Left ex -> throwIO $ ExecFailure ex
         Right (Just stdinH, Just stdoutH, Just stderrH, processHandle) ->
             pure VaultServerProcess
                 { vs_processHandle = processHandle
