@@ -21,11 +21,11 @@ source-repository head
 library
   exposed-modules:     Network.VaultTool,
                        Network.VaultTool.KeyValueV2,
-                       Network.VaultTool.TOTP,
-                       Data.Aeson.Utils
+                       Network.VaultTool.TOTP
 
   other-modules:       Network.VaultTool.Internal,
-                       Network.VaultTool.Types
+                       Network.VaultTool.Types,
+                       Data.Aeson.Utils
 
   build-depends:       base >=4.8 && < 5,
                        text,

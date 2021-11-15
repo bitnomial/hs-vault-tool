@@ -313,7 +313,7 @@ totpTests authConn = do
         account2 = "test2@test.com"
     _ <- TOTP.generateKey authConn pathTOTP $ mkGenKeyReq key2 issuer account2
     keys <- TOTP.listKeys authConn pathTOTP
-    sort (TOTP.unKeyNames keys) @?= [key1, key2]
+    sort keys @?= [key1, key2]
 
     TOTP.deleteKey authConn pathTOTP key2
     throws (TOTP.getKey authConn pathTOTP key2) >>= (@?= True)

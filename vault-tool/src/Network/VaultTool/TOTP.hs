@@ -19,7 +19,6 @@ module Network.VaultTool.TOTP (
     Key (..),
     getKey,
 
-    KeyNames (..),
     listKeys,
 
     deleteKey,
@@ -172,7 +171,10 @@ mkGenerateKeyRequest keyName issuer accountName = GenerateKeyRequest
     }
 
 -- | Generates a new TOTP code via Vault's TOTP API
-generateKey :: VaultConnection Authenticated -> VaultMountedPath -> GenerateKeyRequest -> IO GeneratedKey
+generateKey :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
+            -> VaultMountedPath -- | The TOTP mount path
+            -> GenerateKeyRequest -- | The TOTP key to create
+            -> IO GeneratedKey -- | The resulting TOTP key
 generateKey conn path req = fmap unDataWrapper
     . runVaultRequestAuthenticated conn
     . newPostRequest (mkPathWithKey KeysNamespace path $ gkrKeyName req)
@@ -203,7 +205,10 @@ instance FromJSON Key where
         <*> v .: "period"
 
 -- | Returns the key associated with the given key name
-getKey :: VaultConnection Authenticated -> VaultMountedPath -> Text -> IO Key
+getKey :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
+       -> VaultMountedPath -- | The TOTP mount path
+       -> KeyName -- | The name of the TOTP key to retrieve
+       -> IO Key -- | The key corresponding to the given 'KeyName'
 getKey conn path = fmap unDataWrapper
     . runVaultRequestAuthenticated conn
     . newGetRequest
@@ -217,14 +222,19 @@ instance FromJSON KeyNames where
     parseJSON = withObject "KeyNames" $ fmap KeyNames . (.: "keys")
 
 -- | Returns a list of TOTP keys stored in the given mount path
-listKeys :: VaultConnection Authenticated -> VaultMountedPath -> IO KeyNames
-listKeys conn = fmap unDataWrapper
+listKeys :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
+         -> VaultMountedPath -- | The TOTP mount path
+         -> IO [KeyName] -- | The list of TOTP key names found in the given mount path
+listKeys conn = fmap (unKeyNames . unDataWrapper)
     . runVaultRequestAuthenticated conn
     . newListRequest
     . mkPathWithoutKey KeysNamespace
 
 -- | Deletes the key associated with the given key name
-deleteKey :: VaultConnection Authenticated -> VaultMountedPath -> Text -> IO ()
+deleteKey :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
+          -> VaultMountedPath -- | The TOTP mount path
+          -> KeyName -- | The name of the TOTP key to delete
+          -> IO ()
 deleteKey conn path = runVaultRequestAuthenticated_ conn
     . withStatusCodes [200, 204]
     . newDeleteRequest
@@ -241,7 +251,10 @@ instance ToJSON Code where
     toJSON x = object ["code" .=! unCode x]
 
 -- | Generates a TOTP 'Code' for the given key
-generateCode :: VaultConnection Authenticated -> VaultMountedPath -> Text -> IO Code
+generateCode :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
+             -> VaultMountedPath -- | The TOTP mount path
+             -> KeyName -- | The name of the TOTP key that will be used to generate a code
+             -> IO Code -- | The resulting code
 generateCode conn path = fmap unDataWrapper
     . runVaultRequestAuthenticated conn
     . newGetRequest
@@ -255,7 +268,11 @@ instance FromJSON CodeStatus where
     parseJSON = withObject "Valid" $ fmap (bool InvalidCode ValidCode) . (.: "valid")
 
 -- | Validate the TOTP 'Code' generated for the given key
-validateCode :: VaultConnection Authenticated -> VaultMountedPath -> KeyName -> Code -> IO CodeStatus
+validateCode :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
+             -> VaultMountedPath -- | The TOTP mount path
+             -> KeyName -- | The name of the TOTP key used to validate the given code
+             -> Code -- | The code to validate
+             -> IO CodeStatus -- | The resulting validation status
 validateCode conn path keyName = fmap unDataWrapper
     . runVaultRequestAuthenticated conn
     . newPostRequest (mkPathWithKey CodeNamespace path keyName)
