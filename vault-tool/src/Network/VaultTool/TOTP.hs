@@ -143,9 +143,16 @@ instance ToJSON Skew where
 
 -- | The newly generated Vault TOTP key which includes a
 -- [TOTP Key URI](https://github.com/google/google-authenticator/wiki/Key-Uri-Format)
--- and a base64 encoded QR code representation of the TOTP Key URI.
+-- and a base64 encoded QR code representation of the TOTP Key URI. The QR code can be embedded in a webpage using an
+-- img tag with the prefix:
+--
+-- > data:image/png;base64
+--
+-- For example, if gkrBarcode = ABC:
+--
+-- > <img src="data:image/png;base64,ABC" />
 data GeneratedKey = GeneratedKey
-    { -- | The resulting base64 encoded QR code PNG which contains the TOTP Key URI
+    { -- | The resulting base64 encoded QR code PNG
       gkrBarcode :: Text,
       -- | The resulting [TOTP Key URI](https://github.com/google/google-authenticator/wiki/Key-Uri-Format)
       gkrUrl :: Text
@@ -171,10 +178,10 @@ mkGenerateKeyRequest keyName issuer accountName = GenerateKeyRequest
     }
 
 -- | Generates a new TOTP code via Vault's TOTP API
-generateKey :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
-            -> VaultMountedPath -- | The TOTP mount path
-            -> GenerateKeyRequest -- | The TOTP key to create
-            -> IO GeneratedKey -- | The resulting TOTP key
+generateKey :: VaultConnection Authenticated -- ^ An authenticated connection to talk to Vault
+            -> VaultMountedPath -- ^ The TOTP mount path
+            -> GenerateKeyRequest -- ^ The TOTP key to create
+            -> IO GeneratedKey -- ^ The resulting TOTP key
 generateKey conn path req = fmap unDataWrapper
     . runVaultRequestAuthenticated conn
     . newPostRequest (mkPathWithKey KeysNamespace path $ gkrKeyName req)
@@ -205,10 +212,10 @@ instance FromJSON Key where
         <*> v .: "period"
 
 -- | Returns the key associated with the given key name
-getKey :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
-       -> VaultMountedPath -- | The TOTP mount path
-       -> KeyName -- | The name of the TOTP key to retrieve
-       -> IO Key -- | The key corresponding to the given 'KeyName'
+getKey :: VaultConnection Authenticated -- ^ An authenticated connection to talk to Vault
+       -> VaultMountedPath -- ^ The TOTP mount path
+       -> KeyName -- ^ The name of the TOTP key to retrieve
+       -> IO Key -- ^ The key corresponding to the given 'KeyName'
 getKey conn path = fmap unDataWrapper
     . runVaultRequestAuthenticated conn
     . newGetRequest
@@ -222,18 +229,18 @@ instance FromJSON KeyNames where
     parseJSON = withObject "KeyNames" $ fmap KeyNames . (.: "keys")
 
 -- | Returns a list of TOTP keys stored in the given mount path
-listKeys :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
-         -> VaultMountedPath -- | The TOTP mount path
-         -> IO [KeyName] -- | The list of TOTP key names found in the given mount path
+listKeys :: VaultConnection Authenticated -- ^ An authenticated connection to talk to Vault
+         -> VaultMountedPath -- ^ The TOTP mount path
+         -> IO [KeyName] -- ^ The list of TOTP key names found in the given mount path
 listKeys conn = fmap (unKeyNames . unDataWrapper)
     . runVaultRequestAuthenticated conn
     . newListRequest
     . mkPathWithoutKey KeysNamespace
 
 -- | Deletes the key associated with the given key name
-deleteKey :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
-          -> VaultMountedPath -- | The TOTP mount path
-          -> KeyName -- | The name of the TOTP key to delete
+deleteKey :: VaultConnection Authenticated -- ^ An authenticated connection to talk to Vault
+          -> VaultMountedPath -- ^ The TOTP mount path
+          -> KeyName -- ^ The name of the TOTP key to delete
           -> IO ()
 deleteKey conn path = runVaultRequestAuthenticated_ conn
     . withStatusCodes [200, 204]
@@ -251,10 +258,10 @@ instance ToJSON Code where
     toJSON x = object ["code" .=! unCode x]
 
 -- | Generates a TOTP 'Code' for the given key
-generateCode :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
-             -> VaultMountedPath -- | The TOTP mount path
-             -> KeyName -- | The name of the TOTP key that will be used to generate a code
-             -> IO Code -- | The resulting code
+generateCode :: VaultConnection Authenticated -- ^ An authenticated connection to talk to Vault
+             -> VaultMountedPath -- ^ The TOTP mount path
+             -> KeyName -- ^ The name of the TOTP key that will be used to generate a code
+             -> IO Code -- ^ The resulting code
 generateCode conn path = fmap unDataWrapper
     . runVaultRequestAuthenticated conn
     . newGetRequest
@@ -268,11 +275,11 @@ instance FromJSON CodeStatus where
     parseJSON = withObject "Valid" $ fmap (bool InvalidCode ValidCode) . (.: "valid")
 
 -- | Validate the TOTP 'Code' generated for the given key
-validateCode :: VaultConnection Authenticated -- | An authenticated connection to talk to Vault
-             -> VaultMountedPath -- | The TOTP mount path
-             -> KeyName -- | The name of the TOTP key used to validate the given code
-             -> Code -- | The code to validate
-             -> IO CodeStatus -- | The resulting validation status
+validateCode :: VaultConnection Authenticated -- ^ An authenticated connection to talk to Vault
+             -> VaultMountedPath -- ^ The TOTP mount path
+             -> KeyName -- ^ The name of the TOTP key used to validate the given code
+             -> Code -- ^ The code to validate
+             -> IO CodeStatus -- ^ The resulting validation status
 validateCode conn path keyName = fmap unDataWrapper
     . runVaultRequestAuthenticated conn
     . newPostRequest (mkPathWithKey CodeNamespace path keyName)
