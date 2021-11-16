@@ -352,7 +352,7 @@ vaultAppRoleRoleIdRead conn appRoleName = do
     response <- runVaultRequestAuthenticated conn $ newGetRequest ("/auth/approle/role/" <> appRoleName <> "/role-id")
     let d = _VaultAppRoleResponse_Data response
     case parseEither parseJSON d of
-      Left err -> throwIO $ VaultException_ParseBodyError "GET" ("/auth/approle/role/" <> appRoleName <> "/role-id") (encode d) (T.pack err)
+      Left err -> throwIO $ ParseBodyError "GET" ("/auth/approle/role/" <> appRoleName <> "/role-id") (encode d) (T.pack err)
       Right obj -> return obj
 
 data VaultAppRoleSecretIdGenerateResponse = VaultAppRoleSecretIdGenerateResponse
@@ -372,7 +372,7 @@ vaultAppRoleSecretIdGenerate conn appRoleName metadata = do
     response <- runVaultRequestAuthenticated conn $ newPostRequest ("/auth/approle/role/" <> appRoleName <> "/secret-id") (Just reqBody)
     let d = _VaultAppRoleResponse_Data response
     case parseEither parseJSON d of
-      Left err -> throwIO $ VaultException_ParseBodyError "POST" ("/auth/approle/role/" <> appRoleName <> "/secret-id") (encode d) (T.pack err)
+      Left err -> throwIO $ ParseBodyError "POST" ("/auth/approle/role/" <> appRoleName <> "/secret-id") (encode d) (T.pack err)
       Right obj -> return obj
     where
     reqBody = object[ "metadata" .= metadata ]
@@ -387,18 +387,18 @@ vaultSeal conn =
 --
 -- See 'vaultUnseal'
 data VaultUnseal
-    = VaultUnseal_Key VaultUnsealKey
-    | VaultUnseal_Reset
+    = MasterKey VaultUnsealKey
+    | Reset
     deriving (Show, Eq, Ord)
 
 -- | <https://www.vaultproject.io/docs/http/sys-unseal.html>
 vaultUnseal :: VaultConnection a -> VaultUnseal -> IO VaultSealStatus
 vaultUnseal conn unseal = do
     let reqBody = case unseal of
-            VaultUnseal_Key (VaultUnsealKey key) -> object
+            MasterKey (VaultUnsealKey key) -> object
                 [ "key" .= key
                 ]
-            VaultUnseal_Reset -> object
+            Reset -> object
                 [ "reset" .= True
                 ]
     runVaultRequestUnauthenticated conn $ newPutRequest "/sys/unseal" (Just reqBody)
@@ -488,7 +488,7 @@ vaultMounts conn = do
             Just v -> v
 
     case parseEither parseJSON root of
-        Left err -> throwIO $ VaultException_ParseBodyError "GET" reqPath (encode rspObj) (T.pack err)
+        Left err -> throwIO $ ParseBodyError "GET" reqPath (encode rspObj) (T.pack err)
         Right obj -> pure $ sortOn fst (H.toList obj)
 
 -- | <https://www.vaultproject.io/docs/http/sys-mounts.html>

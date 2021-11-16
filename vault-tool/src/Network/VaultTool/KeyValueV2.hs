@@ -22,13 +22,11 @@ import Control.Applicative (optional)
 import Data.Aeson (
     FromJSON,
     ToJSON,
-    object,
     parseJSON,
-    toJSON,
     withObject,
     (.:),
-    (.=),
  )
+import Data.Aeson.Utils (DataWrapper(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
@@ -96,20 +94,12 @@ vaultReadVersion ::
     Maybe Int ->
     IO (VaultSecretVersion a)
 vaultReadVersion conn (VaultSecretPath (mountedPath, searchPath)) version =
-    runVaultRequestAuthenticated conn (newGetRequest path) >>= \(DataWrapper x) -> pure x
+    unDataWrapper <$> runVaultRequestAuthenticated conn (newGetRequest path)
   where
     path = vaultActionPath ReadSecretVersion mountedPath searchPath <> queryParams
     queryParams = case version of
         Nothing -> ""
         Just n -> "?version=" <> T.pack (show n)
-
-newtype DataWrapper a = DataWrapper a
-
-instance ToJSON a => ToJSON (DataWrapper a) where
-    toJSON (DataWrapper x) = object ["data" .= x]
-
-instance FromJSON a => FromJSON (DataWrapper a) where
-    parseJSON = withObject "DataWrapper" $ fmap DataWrapper . (.: "data")
 
 {- | <https://www.vaultproject.io/docs/secrets/generic/index.html>
 -}
