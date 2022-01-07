@@ -1,3 +1,4 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -42,6 +43,7 @@ import Data.Bool (bool)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Web.HttpApiData (FromHttpApiData (..), ToHttpApiData (..))
 
 import Network.VaultTool.Internal (
     newDeleteRequest,
@@ -249,7 +251,7 @@ deleteKey conn path = runVaultRequestAuthenticated_ conn
 
 -- | A six or eight digit TOTP code
 newtype Code = Code {unCode :: Text}
-    deriving (Show, Eq)
+    deriving (Show, Eq, FromHttpApiData, ToHttpApiData)
 
 instance FromJSON Code where
     parseJSON = withObject "Code" $ fmap Code . (.: "code")
