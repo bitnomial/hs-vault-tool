@@ -66,6 +66,7 @@ import Data.Aeson (
     FromJSON,
     ToJSON,
     Value (..),
+    Key,
     (.:),
     (.=),
     (.:?),
@@ -75,6 +76,7 @@ import Data.Aeson (
     parseJSON,
     withObject,
  )
+import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Types (parseEither, Pair)
 import Data.List (sortOn)
 import Data.Text (Text)
@@ -321,7 +323,7 @@ instance ToJSON VaultAppRoleParameters where
         , "period" .=? _VaultAppRoleParameters_Period v
         ]
       where
-        (.=?) :: ToJSON x => Text -> Maybe x -> Maybe Pair
+        (.=?) :: ToJSON x => Key -> Maybe x -> Maybe Pair
         t .=? x = (t .=) <$> x
 
 instance FromJSON VaultAppRoleParameters where
@@ -483,7 +485,7 @@ vaultMounts conn = do
     -- See <https://github.com/hashicorp/vault/issues/1965>
     --
     -- We do some detection to support both the new and the old format:
-    let root = case H.lookup "data" rspObj of
+    let root = case KM.lookup "data" rspObj of
             Nothing -> Object rspObj
             Just v -> v
 
