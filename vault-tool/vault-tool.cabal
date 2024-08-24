@@ -33,7 +33,8 @@ library
                        http-client,
                        http-types,
                        http-client-tls,
-                       aeson,
+                       -- vault-tool doesn't yet work with new KeyValue constraint from aeson-2.2
+                       aeson < 2.2,
                        unordered-containers,
                        time
 

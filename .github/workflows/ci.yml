@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  cabal:
+    name: cabal / ghc-${{ matrix.ghc }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          # - macOS-latest
+        cabal:
+          - "latest"
+        ghc:
+          - "9.2.8"
+          - "9.4.8"
+          - "9.6.3"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        id: setup-haskell-cabal
+        name: Setup Haskell
+        with:
+          ghc-version: ${{ matrix.ghc }}
+          cabal-version: ${{ matrix.cabal }}
+
+      - uses: actions/cache@v3
+        name: Cache cabal-store
+        with:
+          path: ${{ steps.setup-haskell-cabal.outputs.cabal-store }}
+          key: ${{ matrix.os }}-${{ matrix.ghc }}-cabal
+
+      - name: Build
+        run: |
+          cabal update
+          cabal build all --enable-tests --enable-benchmarks --write-ghc-environment-files=always
+
+      # TODO: Tests require the `vault` executable to be available.
+      # - name: Test
+      #   run: |
+      #     cabal test all --enable-tests --enable-benchmarks --write-ghc-environment-files=always
+
+  stack:
+    name: stack ${{ matrix.resolver }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          # - macOS-latest
+        stack: ["latest"]
+        resolver:
+          - "--stack-yaml ./stack.yaml"
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: haskell-actions/setup@v2
+      name: Setup Haskell Stack
+      with:
+        stack-version: ${{ matrix.stack }}
+        enable-stack: true
+
+    - uses: actions/cache@v3
+      name: Cache ~/.stack
+      with:
+        path: ~/.stack
+        key: ${{ matrix.os }}-stack-${{ matrix.resolver }}
+
+    - name: Build
+      run: |
+        stack build --test --bench --no-run-tests --no-run-benchmarks
+
+    # TODO: Tests require the `vault` executable to be available.
+    # - name: Test
+    #   run: |
+    #     stack test --bench --no-run-benchmarks
