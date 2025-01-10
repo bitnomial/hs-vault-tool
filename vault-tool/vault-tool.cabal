@@ -1,5 +1,5 @@
 name:                vault-tool
-version:             0.2.0.0
+version:             0.2.1.0
 synopsis:            Client library for HashiCorp's Vault tool (via HTTP API)
 description:         Client library for HashiCorp's Vault tool (via HTTP API)
 license:             MIT
@@ -33,8 +33,7 @@ library
                        http-client,
                        http-types,
                        http-client-tls,
-                       -- vault-tool doesn't yet work with new KeyValue constraint from aeson-2.2
-                       aeson < 2.2,
+                       aeson >=2.2,
                        unordered-containers,
                        time
 

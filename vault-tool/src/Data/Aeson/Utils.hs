@@ -15,10 +15,10 @@ import Data.Maybe (catMaybes)
 object :: [Maybe Pair] -> Value
 object = Aeson.object . catMaybes
 
-(.=!) :: (KeyValue a, ToJSON b) => Key -> b -> Maybe a
+(.=!) :: (KeyValue e a, ToJSON b) => Key -> b -> Maybe a
 k .=! v = Just $ k .= v
 
-(.=?) :: (Functor f, KeyValue a, ToJSON b) => Key -> f b -> f a
+(.=?) :: (Functor f, KeyValue e a, ToJSON b) => Key -> f b -> f a
 k .=? v = (k .=) <$> v
 
 newtype DataWrapper a = DataWrapper {unDataWrapper :: a}
