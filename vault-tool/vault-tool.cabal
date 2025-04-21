@@ -21,7 +21,8 @@ source-repository head
 library
   exposed-modules:     Network.VaultTool,
                        Network.VaultTool.KeyValueV2,
-                       Network.VaultTool.TOTP
+                       Network.VaultTool.TOTP,
+                       Network.VaultTool.Transit
 
   other-modules:       Network.VaultTool.Internal,
                        Network.VaultTool.Types,
@@ -30,6 +31,7 @@ library
   build-depends:       base >=4.8 && < 5,
                        text,
                        bytestring,
+                       base64-bytestring,
                        http-client,
                        http-types,
                        http-client-tls,
