@@ -34,7 +34,7 @@ import qualified Data.ByteString.Base64 as B64
 import qualified Data.ByteString.Char8 as C8
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.Encoding (decodeLatin1, encodeUtf8)
+import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import GHC.Generics (Generic)
 
 import Network.VaultTool.Internal (
@@ -110,7 +110,7 @@ encryptText :: VaultConnection Authenticated -> VaultMountedPath -> KeyName -> T
 encryptText conn path key = encryptByteString conn path key . encodeUtf8
 
 decryptText :: VaultConnection Authenticated -> VaultMountedPath -> KeyName -> CipherText -> IO Text
-decryptText conn path key = fmap decodeLatin1 . decryptByteString conn path key
+decryptText conn path key = fmap decodeUtf8 . decryptByteString conn path key
 
 newtype VaultCiphertext
     = VaultCiphertext {getCyphertext :: CipherText}
