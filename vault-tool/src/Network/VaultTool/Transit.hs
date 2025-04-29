@@ -1,6 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 {- | Implements a subset of the Vault Transit secrets engine API.
@@ -61,11 +60,23 @@ instance A.FromJSON Base64 where
 
 newtype CipherText = CipherText {getCipherText :: Base64}
     deriving (Eq, Ord, Read, Show, Generic)
-    deriving newtype (A.FromJSON)
 
 instance A.ToJSON CipherText where
     -- Note that we only support a v1 key for encryption and decryption
     toJSON (CipherText contents) = A.toJSON $ "vault:v1:" <> C8.unpack (getBase64 contents)
+
+instance A.FromJSON CipherText where
+    parseJSON v = do
+        Base64 ciphertext <- A.parseJSON v
+        case B.split colon ciphertext of
+            -- Typically, the ciphertext will look like
+            --    "vault:v1:<ciphertext>"
+            --
+            -- Note that we only support a v1 key for encryption and decryption
+            ["vault", "v1", cphtxt] -> pure (CipherText $ Base64 cphtxt)
+            _otherwise -> fail "Undecipherable ciphertext"
+      where
+        colon = fromIntegral $ fromEnum ':'
 
 encodeBase64 :: ByteString -> Base64
 encodeBase64 = Base64 . B64.encode
@@ -122,16 +133,7 @@ newtype VaultCiphertext
 instance A.FromJSON VaultCiphertext where
     parseJSON = A.withObject "VaultCiphertext" $ \obj -> do
         data' <- obj A..: "data"
-        Base64 ciphertext <- data' A..: "ciphertext"
-        case B.split colon ciphertext of
-            -- Typically, the ciphertext will look like
-            --    "vault:v1:<ciphertext>"
-            --
-            -- Note that we only support a v1 key for encryption and decryption
-            ["vault", "v1", cphtxt] -> pure $ VaultCiphertext (CipherText $ Base64 cphtxt)
-            _otherwise -> fail "Undecipherable ciphertext"
-      where
-        colon = fromIntegral $ fromEnum ':'
+        VaultCiphertext <$> data' A..: "ciphertext"
 
 newtype VaultPlaintext a
     = VaultPlaintext {getPlaintext :: a}
