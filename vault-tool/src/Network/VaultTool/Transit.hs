@@ -61,7 +61,11 @@ instance A.FromJSON Base64 where
 
 newtype CipherText = CipherText {getCipherText :: Base64}
     deriving (Eq, Ord, Read, Show, Generic)
-    deriving newtype (A.FromJSON, A.ToJSON)
+    deriving newtype (A.FromJSON)
+
+instance A.ToJSON CipherText where
+    -- Note that we only support a v1 key for encryption and decryption
+    toJSON (CipherText contents) = A.toJSON $ "vault:v1:" <> C8.unpack (getBase64 contents)
 
 encodeBase64 :: ByteString -> Base64
 encodeBase64 = Base64 . B64.encode
@@ -122,7 +126,9 @@ instance A.FromJSON VaultCiphertext where
         case B.split colon ciphertext of
             -- Typically, the ciphertext will look like
             --    "vault:v1:<ciphertext>"
-            ["vault", _version, cphtxt] -> pure $ VaultCiphertext (CipherText $ Base64 cphtxt)
+            --
+            -- Note that we only support a v1 key for encryption and decryption
+            ["vault", "v1", cphtxt] -> pure $ VaultCiphertext (CipherText $ Base64 cphtxt)
             _otherwise -> fail "Undecipherable ciphertext"
       where
         colon = fromIntegral $ fromEnum ':'
